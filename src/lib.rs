@@ -1,5 +1,6 @@
+#[allow(dead_code)]
 pub struct FrameDecoder {
-    stream: Option<u8>
+    stream: Option<u8>,
 }
 
 impl FrameDecoder {
@@ -7,20 +8,10 @@ impl FrameDecoder {
         FrameDecoder { stream: None }
     }
 
-    pub fn decode(&mut self) {
-        self.stream = Some(42);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::FrameDecoder;
-
-    #[test]
-    fn it_works() {
-        let mut decoder = FrameDecoder::new();
-        decoder.decode();
-        assert_eq!(decoder.stream, Some(42));
+    pub fn decode(&mut self, data: [u8; 16]) {
+        let _aux = data[15];
+        for i in 0..15 {
+            println!("{}={}", i, data[i]);
+        }
     }
 }
