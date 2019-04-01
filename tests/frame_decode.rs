@@ -6,8 +6,8 @@ fn display(stream: Option<u8>, byte: u8) {
 }
 
 #[test]
-fn good_path() {
-    let mut d = stm::FrameDecoder::new();
+fn good_path_single() {
+    let mut fd = stm::FrameDecoder::new();
     let mut frame = [0; 32];
 
     frame[0] = 0x03;
