@@ -4,7 +4,7 @@ pub struct FrameDecoder {
     stream: Option<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum FrameDecoderError {
     InvalidStreamId(usize),
     InvalidAuxByte(usize),
@@ -40,17 +40,22 @@ impl FrameDecoder {
     }
 
     /// Decode a single frame.
-    pub fn decode_frame<C>(&mut self, frame: &[u8], cb: &mut C, offset: usize) -> Result
+    fn decode_frame<C>(&mut self, frame: &[u8], cb: &mut C, offset: usize) -> Result
     where
         C: FrameConsumer,
     {
         if frame.len() < 16 {
-            return Err(PartialFrame(offset));
+            return Err(PartialFrame(frame.len()));
+        }
+
+        let aux_byte = frame[15];
+
+        if aux_byte & 0x80 && frame[14] & 0x01 {
+            return Err(InvalidAuxByte(offset + 15));
         }
 
         let mut cur_stream = self.stream;
         let mut next_stream = None;
-        let aux_byte = frame[15];
 
         for (i, byte) in frame[..15].iter().enumerate() {
             if i % 2 == 0 {
@@ -62,9 +67,6 @@ impl FrameDecoder {
                     }
                     // Id Change.
                     if aux_bit == 1 {
-                        if i == 14 {
-                            return Err(InvalidAuxByte(offset + i));
-                        }
                         // Delayed ID Change.
                         next_stream = Some(byte >> 1);
                     } else {

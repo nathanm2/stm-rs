@@ -1,30 +1,28 @@
-fn display(stream: Option<u8>, byte: u8) {
-    match stream {
-        Some(id) => println!("{} = {}", id, byte),
-        None => println!("<Unknown> = {}", byte),
-    }
+use stm::frame_decoder::FrameDecoderError::*;
+use stm::frame_decoder::{FrameConsumer, FrameDecoder};
+
+struct NullConsumer;
+
+impl FrameConsumer for NullConsumer {
+    fn stream_byte(&mut self, _stream: Option<u8>, _data: u8) {}
 }
 
 #[test]
-fn good_path_single() {
-    let mut fd = stm::FrameDecoder::new();
-    let mut frame = [0; 32];
+fn partial_frame() {
+    let mut fd = FrameDecoder::new();
+    let mut c = NullConsumer {};
+    let frame = [0; 12];
 
-    frame[0] = 0x03;
-    frame[2] = 0x05;
-    d.decode(&frame, display).expect("Not Ok");
+    assert_eq!(fd.decode(&frame, &mut c, 0), Err(PartialFrame(12)));
 }
 
 #[test]
 fn bad_path() {
-    let mut d = stm::FrameDecoder::new();
+    let mut fd = FrameDecoder::new();
+    let mut c = NullConsumer {};
     let mut frame = [0; 32];
 
     frame[0] = 0x03;
     frame[2] = 0xFF;
-    let r = d.decode(&frame, display);
-    match r {
-        Ok(_) => println!("Everything works"),
-        Err(code) => println!("Failure encountered: {:?}", code),
-    }
+    assert_eq!(fd.decode(&frame, &mut c, 0), Err(InvalidStreamId(2)));
 }
