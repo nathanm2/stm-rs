@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use stm::frame_decoder::FrameDecoderError::*;
 use stm::frame_decoder::{FrameConsumer, FrameDecoder};
 
@@ -25,4 +26,35 @@ fn bad_path() {
     frame[0] = 0x03;
     frame[2] = 0xFF;
     assert_eq!(fd.decode(&frame, &mut c, 0), Err(InvalidStreamId(2)));
+}
+
+type RecordMap = HashMap<Option<u8>, Vec<u8>>;
+
+struct Record {
+    streams: RecordMap,
+}
+
+impl FrameConsumer for Record {
+    fn stream_byte(&mut self, stream: Option<u8>, data: u8) {
+        self.streams
+            .entry(stream)
+            .and_modify(|e| e.push(data))
+            .or_insert(vec![data]);
+    }
+}
+
+#[test]
+fn unknown_stream() {
+    let mut fd = FrameDecoder::new();
+    let mut c = Record {
+        streams: RecordMap::new(),
+    };
+    let frame = [0; 16];
+
+    assert_eq!(fd.decode(&frame, &mut c, 0), Ok(()));
+
+    let mut exp = RecordMap::new();
+    exp.insert(None, vec![0; 15]);
+
+    assert_eq!(c.streams, exp);
 }

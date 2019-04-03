@@ -50,7 +50,7 @@ impl FrameDecoder {
 
         let aux_byte = frame[15];
 
-        if aux_byte & 0x80 && frame[14] & 0x01 {
+        if aux_byte & 0x80 == 0x80 && frame[14] & 0x01 == 0x01 {
             return Err(InvalidAuxByte(offset + 15));
         }
 
