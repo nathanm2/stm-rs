@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use stm::frame_builder::*;
 use stm::frame_decoder::FrameDecoderError::*;
 use stm::frame_decoder::{FrameConsumer, FrameDecoder};
 
@@ -62,7 +63,7 @@ impl FrameConsumer for Record {
 fn unknown_stream() {
     let mut fd = FrameDecoder::new();
     let mut c = Record::new();
-    let frame = [0; 32];
+    let frame = FrameBuilder::new(2).build();
 
     assert_eq!(fd.decode(&frame, &mut c, 0), Ok(()));
     assert_eq!(c.frame_count, 2);
@@ -73,54 +74,30 @@ fn unknown_stream() {
     assert_eq!(c.streams, exp);
 }
 
-fn set_stream_id(frames: &mut [u8], offset: usize, id: u8, immediate: bool) {
-    assert!(offset % 2 == 0);
-    let aux_offset = offset - (offset % 16) + 15;
-    frames[offset] = id << 1 | 0x01;
-
-    let mask = 0x01 << ((offset % 16) / 2);
-    if immediate {
-        frames[aux_offset] &= !mask;
-    } else {
-        frames[aux_offset] |= mask;
-    }
-}
-
-fn set_stream_data(frames: &mut [u8], offset: usize, data: u8) {
-    if offset % 2 == 0 {
-        let aux_offset = offset - (offset % 16) + 15;
-        frames[offset] = data & 0xFE;
-
-        let mask = 0x01 << ((offset % 16) / 2);
-        if data & 0x01 == 0 {
-            frames[aux_offset] &= !mask;
-        } else {
-            frames[aux_offset] |= mask;
-        }
-    } else {
-        frames[offset] = data;
-    }
-}
-
 // Test an immediate stream change
 #[test]
 fn stream_change() {
     let mut fd = FrameDecoder::new();
     let mut c = Record::new();
-    let mut frames = [0; 32];
+    let mut frames = FrameBuilder::new(0)
+        .data_with(2, || 0)
+        .immediate_id(3)
+        .data(10, 3)
+        .immediate_id(4)
+        .build();
 
-    set_stream_data(&mut frames, 0, 1);
-    set_stream_data(&mut frames, 1, 2);
-    set_stream_id(&mut frames, 2, 3, true);
-    set_stream_id(&mut frames, 6, 4, false);
+    // set_stream_data(&mut frames, 0, 1).unwrap();
+    // set_stream_data(&mut frames, 1, 2).unwrap();
+    // set_stream_id(&mut frames, 2, 3, true).unwrap();
+    // set_stream_id(&mut frames, 6, 4, false).unwrap();
 
     assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
     assert_eq!(c.frame_count, 2);
 
     let mut exp = RecordMap::new();
     exp.insert(None, vec![1, 2]);
-    exp.insert(Some(3), vec![0; 4]);
-    exp.insert(Some(4), vec![0; 22]);
+    exp.insert(Some(3), vec![0; 27]);
+    // exp.insert(Some(4), vec![0; 22]);
 
     assert_eq!(c.streams, exp);
 }
