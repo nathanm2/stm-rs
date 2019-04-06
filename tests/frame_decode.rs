@@ -76,28 +76,50 @@ fn unknown_stream() {
 
 // Test an immediate stream change
 #[test]
-fn stream_change() {
+fn immediate_change() {
     let mut fd = FrameDecoder::new();
     let mut c = Record::new();
-    let mut frames = FrameBuilder::new(0)
-        .data_with(2, || 0)
+    let frames = FrameBuilder::new(1)
+        .data(1)
+        .data(2)
         .immediate_id(3)
-        .data(10, 3)
+        .data_span(5, || 3)
         .immediate_id(4)
+        .data_span(6, || 4)
         .build();
 
-    // set_stream_data(&mut frames, 0, 1).unwrap();
-    // set_stream_data(&mut frames, 1, 2).unwrap();
-    // set_stream_id(&mut frames, 2, 3, true).unwrap();
-    // set_stream_id(&mut frames, 6, 4, false).unwrap();
-
     assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
-    assert_eq!(c.frame_count, 2);
+    assert_eq!(c.frame_count, 1);
 
     let mut exp = RecordMap::new();
     exp.insert(None, vec![1, 2]);
-    exp.insert(Some(3), vec![0; 27]);
-    // exp.insert(Some(4), vec![0; 22]);
+    exp.insert(Some(3), vec![3; 5]);
+    exp.insert(Some(4), vec![4; 6]);
+
+    assert_eq!(c.streams, exp);
+}
+
+// Test a delayed stream change
+#[test]
+fn delayed_change() {
+    let mut fd = FrameDecoder::new();
+    let mut c = Record::new();
+    let frames = FrameBuilder::new(1)
+        .data(1)
+        .data(2)
+        .delayed_id(3)
+        .data_span(5, || 7)
+        .delayed_id(4)
+        .data_span(6, || 7)
+        .build();
+
+    assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
+    assert_eq!(c.frame_count, 1);
+
+    let mut exp = RecordMap::new();
+    exp.insert(None, vec![1, 2, 7]);
+    exp.insert(Some(3), vec![7; 5]);
+    exp.insert(Some(4), vec![7; 5]);
 
     assert_eq!(c.streams, exp);
 }

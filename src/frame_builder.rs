@@ -50,7 +50,7 @@ pub fn set_stream_data(frames: &mut [u8], offset: usize, data: u8) -> Result {
 }
 
 pub struct FrameBuilder {
-    frames: Vec<u8>
+    frames: Vec<u8>,
     offset: usize,
 }
 
@@ -72,17 +72,40 @@ impl FrameBuilder {
         self.offset += if self.offset % 16 == 15 { 2 } else { 1 };
     }
 
-    pub fn id(mut self, value: u8, immediate: bool) -> FrameBuilder {
+    fn set_id(&mut self, value: u8, immediate: bool) {
         self.check();
         set_stream_id(&mut self.frames, self.offset, value, immediate).unwrap();
         self.increment_offset();
+    }
+
+    pub fn immediate_id(mut self, value: u8) -> FrameBuilder {
+        self.set_id(value, true);
+        self
+    }
+
+    pub fn delayed_id(mut self, value: u8) -> FrameBuilder {
+        self.set_id(value, false);
+        self
+    }
+
+    fn set_data(&mut self, value: u8) {
+        self.check();
+        set_stream_data(&mut self.frames, self.offset, value).unwrap();
+        self.increment_offset();
+    }
+
+    pub fn data_span<F>(mut self, span: usize, mut f: F) -> FrameBuilder
+    where
+        F: FnMut() -> u8,
+    {
+        for _ in 0..span {
+            self.set_data(f());
+        }
         self
     }
 
     pub fn data(mut self, value: u8) -> FrameBuilder {
-        self.check();
-        set_stream_data(&mut self.frames, self.offset, value).unwrap();
-        self.increment_offset();
+        self.set_data(value);
         self
     }
 
