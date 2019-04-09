@@ -3,7 +3,8 @@ use std::result;
 #[derive(Debug, PartialEq)]
 pub enum FrameBuilderError {
     InvalidOffset(usize),
-    InvalidStreamId(u8),
+    InvalidStreamId(usize, u8),
+    MissingData(usize),
 }
 
 use FrameBuilderError::*;
@@ -15,8 +16,8 @@ pub fn set_stream_id(frames: &mut [u8], offset: usize, id: u8, immediate: bool) 
         return Err(InvalidOffset(offset));
     }
 
-    if id >= 0xfe {
-        return Err(InvalidStreamId(id));
+    if id >= 0x7f {
+        return Err(InvalidStreamId(offset, id));
     }
 
     let aux_offset = (offset / 16) + 15;
@@ -63,76 +64,89 @@ pub struct FrameBuilder {
 impl FrameBuilder {
     pub fn new(capacity: usize) -> FrameBuilder {
         FrameBuilder {
-            frames: Vec<u8>::with_capacity(capacity),
+            frames: Vec::<u8>::with_capacity(capacity),
             offset: 0,
-            last_data: None
+            last_data: None,
         }
     }
 
-    // See if we need to add a new frame:
-    fn check(&mut self) {
+    // Allocate a new frame (if needed):
+    fn check_frame(&mut self) {
         if self.offset == self.frames.len() {
             self.frames.resize(self.frames.len() + 16, 0);
         }
     }
 
-    // Skip over the aux byte:
+    // Increment the offset, skipping over the aux byte:
     fn increment_offset(&mut self) {
         self.offset += if self.offset % 16 == 15 { 2 } else { 1 };
     }
 
-    fn set_id_direct(&mut self, value: u8, immediate: bool) -> Result {
-        self.check();
-        set_stream_id(&mut self.frames, self.offset, value, immediate)?;
+    fn set_data(&mut self, value: u8) -> Result {
+        self.check_frame();
+        set_stream_data(&mut self.frames, self.offset, value)?;
         self.increment_offset();
+        self.last_data = Some(value);
         Ok(())
     }
 
+    fn set_id_direct(&mut self, value: u8, immediate: bool) -> Result {
+        self.check_frame();
+        set_stream_id(&mut self.frames, self.offset, value, immediate)?;
+        self.increment_offset();
+        self.last_data = None;
+        Ok(())
+    }
+
+    // Will automatically set the id to 'immediate' or 'delayed' as needed.
     fn set_id(&mut self, value: u8) -> Result {
-        if self.offset % 2 == 1 {
-            self.offset -= 1;
-            match self.last_data {
-                None => self.set_id_full(value, true)?,
-                Some(byte) => {self.set_id_full(value, false)?;
-                    self.set_data(byte)?; }
-            }
+        if self.offset % 2 == 0 {
+            self.set_id_direct(value, true)?;
         } else {
-            self.set_id_full(value, true)?;
-            self.last_data = None;
+            self.offset -= 1;
+
+            if let Some(byte) = self.last_data {
+                self.set_id_direct(value, false)?;
+                self.set_data(byte)?;
+                self.last_data = None;
+            } else {
+                return Err(MissingData(self.offset));
+            }
         }
         Ok(())
     }
 
     pub fn immediate_id(mut self, value: u8) -> FrameBuilder {
-        self.set_id_full(value, true).unwrap();
+        self.set_id_direct(value, true).unwrap();
         self
     }
 
     pub fn delayed_id(mut self, value: u8) -> FrameBuilder {
-        self.set_id_full(value, false).unwrap();
+        self.set_id_direct(value, false).unwrap();
         self
     }
 
-    fn set_data(&mut self, value: u8) {
-        self.check();
-        set_stream_data(&mut self.frames, self.offset, value).unwrap();
-        self.increment_offset();
-        self.last_data = Some(value);
-
+    pub fn id(mut self, id: u8) -> FrameBuilder {
+        self.set_id(id).unwrap();
+        self
     }
 
-    pub fn data_span<F>(mut self, span: usize, mut f: F) -> FrameBuilder
+    pub fn data_span_with<F>(mut self, span: usize, mut f: F) -> FrameBuilder
     where
         F: FnMut() -> u8,
     {
         for _ in 0..span {
-            self.set_data(f());
+            self.set_data(f()).unwrap();
         }
         self
     }
 
+    pub fn data_span(self, span: usize, data: u8) -> FrameBuilder {
+        self.data_span_with(span, || data)
+    }
+
     pub fn data(mut self, value: u8) -> FrameBuilder {
-        self.set_data(value);
+        self.set_data(value).unwrap();
         self
     }
 
