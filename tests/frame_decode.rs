@@ -82,10 +82,10 @@ fn immediate_change() {
     let frames = FrameBuilder::new(1)
         .data(1)
         .data(2)
-        .immediate_id(3)
-        .data_span(5, || 3)
-        .immediate_id(4)
-        .data_span(6, || 4)
+        .id(3)
+        .data_span(5, 3)
+        .id(4)
+        .data_span(6, 4)
         .build();
 
     assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
@@ -107,10 +107,11 @@ fn delayed_change() {
     let frames = FrameBuilder::new(1)
         .data(1)
         .data(2)
-        .delayed_id(3)
-        .data_span(5, || 7)
-        .delayed_id(4)
-        .data_span(6, || 7)
+        .data(3)
+        .id(3)
+        .data_span(5, 7)
+        .id(4)
+        .data_span(6, 7)
         .build();
 
     assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
