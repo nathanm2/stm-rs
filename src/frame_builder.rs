@@ -4,6 +4,7 @@ use std::result;
 pub enum FrameBuilderError {
     InvalidOffset(usize),
     InvalidStreamId(usize, u8),
+    InvalidDelayedId(usize, u8),
     MissingData(usize),
 }
 
@@ -18,6 +19,10 @@ pub fn set_stream_id(frames: &mut [u8], offset: usize, id: u8, immediate: bool) 
 
     if id >= 0x7f {
         return Err(InvalidStreamId(offset, id));
+    }
+
+    if immediate == false && offset % 16 == 14 {
+        return Err(InvalidDelayedId(offset, id));
     }
 
     let aux_offset = (offset / 16) + 15;
@@ -79,7 +84,7 @@ impl FrameBuilder {
 
     // Increment the offset, skipping over the aux byte:
     fn increment_offset(&mut self) {
-        self.offset += if self.offset % 16 == 15 { 2 } else { 1 };
+        self.offset += if self.offset % 16 == 14 { 2 } else { 1 };
     }
 
     fn set_data(&mut self, value: u8) -> Result {

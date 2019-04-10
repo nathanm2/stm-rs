@@ -9,6 +9,7 @@ impl FrameConsumer for NullConsumer {
     fn stream_byte(&mut self, _stream: Option<u8>, _data: u8) {}
 }
 
+// Feed a partial frame into the decoder:
 #[test]
 fn partial_frame() {
     let mut fd = FrameDecoder::new();
@@ -18,6 +19,7 @@ fn partial_frame() {
     assert_eq!(fd.decode(&frame, &mut c, 0), Err(PartialFrame(12)));
 }
 
+// Put an invalid id within the stream:
 #[test]
 fn bad_path() {
     let mut fd = FrameDecoder::new();
@@ -58,18 +60,18 @@ impl FrameConsumer for Record {
     }
 }
 
-// Two frames worth of data with an unknown stream destination:
+// Two frames worth of data with an unknown stream id:
 #[test]
-fn unknown_stream() {
+fn unknown_id() {
     let mut fd = FrameDecoder::new();
     let mut c = Record::new();
-    let frame = FrameBuilder::new(2).build();
+    let frames = FrameBuilder::new(2).data_span(30, 3).build();
 
-    assert_eq!(fd.decode(&frame, &mut c, 0), Ok(()));
+    assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
     assert_eq!(c.frame_count, 2);
 
     let mut exp = RecordMap::new();
-    exp.insert(None, vec![0; 30]);
+    exp.insert(None, vec![3; 30]);
 
     assert_eq!(c.streams, exp);
 }
@@ -80,21 +82,18 @@ fn immediate_change() {
     let mut fd = FrameDecoder::new();
     let mut c = Record::new();
     let frames = FrameBuilder::new(1)
+        .immediate_id(1)
         .data(1)
-        .data(2)
-        .id(3)
-        .data_span(5, 3)
-        .id(4)
-        .data_span(6, 4)
+        .immediate_id(2)
+        .data_span(12, 2)
         .build();
 
     assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
     assert_eq!(c.frame_count, 1);
 
     let mut exp = RecordMap::new();
-    exp.insert(None, vec![1, 2]);
-    exp.insert(Some(3), vec![3; 5]);
-    exp.insert(Some(4), vec![4; 6]);
+    exp.insert(Some(1), vec![1]);
+    exp.insert(Some(2), vec![2; 12]);
 
     assert_eq!(c.streams, exp);
 }
@@ -104,23 +103,46 @@ fn immediate_change() {
 fn delayed_change() {
     let mut fd = FrameDecoder::new();
     let mut c = Record::new();
-    let frames = FrameBuilder::new(1)
+    let frames = FrameBuilder::new(2)
+        .data_span(2, 1)
+        .delayed_id(4)
         .data(1)
-        .data(2)
-        .data(3)
-        .id(3)
-        .data_span(5, 7)
-        .id(4)
-        .data_span(6, 7)
+        .data_span(4, 4)
+        .delayed_id(5)
+        .data(4)
+        .data_span(20, 5)
+        .build();
+
+    assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
+    assert_eq!(c.frame_count, 2);
+
+    let mut exp = RecordMap::new();
+    exp.insert(None, vec![1; 3]);
+    exp.insert(Some(4), vec![4; 5]);
+    exp.insert(Some(5), vec![5; 20]);
+
+    assert_eq!(c.streams, exp);
+}
+
+// A delayed switch followed immediately by an immediate switch
+#[test]
+fn delayed_and_immediate_change() {
+    let mut fd = FrameDecoder::new();
+    let mut c = Record::new();
+    let frames = FrameBuilder::new(1)
+        .data_span(2, 1)
+        .delayed_id(4)
+        .data(1)
+        .immediate_id(5)
+        .data_span(10, 5)
         .build();
 
     assert_eq!(fd.decode(&frames, &mut c, 0), Ok(()));
     assert_eq!(c.frame_count, 1);
 
     let mut exp = RecordMap::new();
-    exp.insert(None, vec![1, 2, 7]);
-    exp.insert(Some(3), vec![7; 5]);
-    exp.insert(Some(4), vec![7; 5]);
+    exp.insert(None, vec![1; 3]);
+    exp.insert(Some(5), vec![5; 10]);
 
     assert_eq!(c.streams, exp);
 }
