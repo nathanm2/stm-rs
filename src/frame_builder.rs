@@ -60,10 +60,16 @@ pub fn set_stream_data(frames: &mut [u8], offset: usize, data: u8) -> Result {
     Ok(())
 }
 
+enum LastOp {
+    None,
+    Data(u8),
+    Id,
+}
+
 pub struct FrameBuilder {
     frames: Vec<u8>,
     offset: usize,
-    last_data: Option<u8>, // Last byte of data written.
+    last_op: LastOp,
 }
 
 impl FrameBuilder {
@@ -71,7 +77,7 @@ impl FrameBuilder {
         FrameBuilder {
             frames: Vec::<u8>::with_capacity(capacity),
             offset: 0,
-            last_data: None,
+            last_op: LastOp::None,
         }
     }
 
@@ -87,11 +93,11 @@ impl FrameBuilder {
         self.offset += if self.offset % 16 == 14 { 2 } else { 1 };
     }
 
-    fn set_data(&mut self, value: u8) -> Result {
+    pub fn set_data(&mut self, value: u8) -> Result {
         self.check_frame();
         set_stream_data(&mut self.frames, self.offset, value)?;
         self.increment_offset();
-        self.last_data = Some(value);
+        self.last_op = LastOp::Data(value);
         Ok(())
     }
 
@@ -99,23 +105,27 @@ impl FrameBuilder {
         self.check_frame();
         set_stream_id(&mut self.frames, self.offset, value, immediate)?;
         self.increment_offset();
-        self.last_data = None;
+        self.last_op = LastOp::Id;
         Ok(())
     }
 
     // Will automatically set the id to 'immediate' or 'delayed' as needed.
-    fn set_id(&mut self, value: u8) -> Result {
+    pub fn set_id(&mut self, value: u8) -> Result {
+        if let LastOp::Id = self.last_op {
+            return Err(MissingData(self.offset));
+        }
+
         if self.offset % 2 == 0 {
             self.set_id_direct(value, true)?;
         } else {
             self.offset -= 1;
 
-            if let Some(byte) = self.last_data {
+            if let LastOp::Data(byte) = self.last_op {
                 self.set_id_direct(value, false)?;
                 self.set_data(byte)?;
-                self.last_data = None;
+                self.last_op = LastOp::Id;
             } else {
-                return Err(MissingData(self.offset));
+                panic!();
             }
         }
         Ok(())
