@@ -146,3 +146,5 @@ fn delayed_and_immediate_change() {
 
     assert_eq!(c.streams, exp);
 }
+
+// A delayed switch at the end of a span
