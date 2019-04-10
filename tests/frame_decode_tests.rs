@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use stm::frame_builder::*;
-use stm::frame_decoder::FrameDecoderError::*;
-use stm::frame_decoder::{FrameConsumer, FrameDecoder};
+use stm::frame_decoder::{FrameConsumer, FrameDecoder, FrameDecoderError::*};
 
 struct NullConsumer;
 
@@ -147,4 +146,15 @@ fn delayed_and_immediate_change() {
     assert_eq!(c.streams, exp);
 }
 
-// A delayed switch at the end of a span
+// Put a delayed id switch in an invalid position:
+#[test]
+fn invalid_aux_byte() {
+    let mut fd = FrameDecoder::new();
+    let mut c = Record::new();
+    let mut frames = [0; 32];
+
+    frames[14] = 0x03;
+    frames[15] = 0x80;
+
+    assert_eq!(fd.decode(&frames, &mut c, 0), Err(InvalidAuxByte(15)));
+}
