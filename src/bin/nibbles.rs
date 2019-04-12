@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::path::PathBuf;
 use stm::frame_decoder::{FrameConsumer, FrameDecoder};
 
 struct NibbleDumper {}
@@ -11,14 +13,12 @@ impl FrameConsumer for NibbleDumper {
     }
 }
 
-fn main() {
-    let mut fd = FrameDecoder::new();
-    let mut dumper = NibbleDumper {};
-    let mut frame = [0; 32];
+fn main() -> Result<(), Box<Error>> {
+    let files: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
 
-    frame[0] = 0x03;
-    frame[2] = 0x05;
+    if files.is_empty() {
+        Err("usage: nibbles FILE {FILE ...}")?;
+    }
 
-    fd.decode(&frame, &mut dumper, 0)
-        .expect("Error encountered");
+    Ok(())
 }
