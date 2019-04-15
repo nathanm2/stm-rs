@@ -34,15 +34,17 @@ fn run() -> Result<(), NibblesError> {
     Ok(())
 }
 
+const PROG_NAME: &str = "nibbles";
+
 fn main() {
     if let Err(err) = run() {
         match err {
             UsageError(msg) => {
-                println!("nibbles: {}", msg);
+                println!("{}: {}", PROG_NAME, msg);
                 display_usage();
             }
             OtherError(msg) => {
-                eprintln!("nibbles: {}", msg);
+                eprintln!("{}: {}", PROG_NAME, msg);
             }
         }
         std::process::exit(1);
