@@ -1,24 +1,50 @@
 use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
-use stm::frame_decoder::{FrameConsumer, FrameDecoder};
 
-struct NibbleDumper {}
+#[derive(Debug)]
+enum NibblesError {
+    UsageError(String),
+    OtherError(String),
+}
 
-impl FrameConsumer for NibbleDumper {
-    fn stream_byte(&mut self, stream: Option<u8>, data: u8) {
-        match stream {
-            Some(id) => println!("{} = {}", id, data),
-            None => println!("<Unknown> = {}", data),
+impl Error for NibblesError {}
+
+impl fmt::Display for NibblesError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            UsageError(msg) | OtherError(msg) => write!(f, "{}", msg),
         }
     }
 }
 
-fn main() -> Result<(), Box<Error>> {
+use NibblesError::*;
+
+fn display_usage() {
+    println!("usage: nibbles [OPTIONS] [FILE ...]");
+}
+
+fn run() -> Result<(), NibblesError> {
     let files: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
 
     if files.is_empty() {
-        Err("usage: nibbles FILE {FILE ...}")?;
+        return Err(OtherError(format!("No files specified")))?;
     }
 
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        match err {
+            UsageError => {
+                println!("nibbles: {}", err);
+                display_usage();
+            }
+            OtherError => {
+                eprintln!("nibbles: {}", err);
+            }
+        }
+        std::process::exit(1);
+    }
 }
