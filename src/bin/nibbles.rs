@@ -37,12 +37,12 @@ fn run() -> Result<(), NibblesError> {
 fn main() {
     if let Err(err) = run() {
         match err {
-            UsageError => {
-                println!("nibbles: {}", err);
+            UsageError(msg) => {
+                println!("nibbles: {}", msg);
                 display_usage();
             }
-            OtherError => {
-                eprintln!("nibbles: {}", err);
+            OtherError(msg) => {
+                eprintln!("nibbles: {}", msg);
             }
         }
         std::process::exit(1);
