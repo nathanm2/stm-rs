@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use stm::frame_builder::*;
-use stm::frame_decoder::{FrameConsumer, FrameDecoder, FrameDecoderError::*};
+use stm::frame_decoder::{Error::*, FrameConsumer, FrameDecoder};
 
 struct NullConsumer;
 

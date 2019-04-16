@@ -1,3 +1,4 @@
+use std::fmt;
 use std::result;
 
 pub struct FrameDecoder {
@@ -5,15 +6,27 @@ pub struct FrameDecoder {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum FrameDecoderError {
+pub enum Error {
     InvalidStreamId(usize),
     InvalidAuxByte(usize),
     PartialFrame(usize),
 }
 
-use self::FrameDecoderError::*;
+impl std::error::Error for Error {}
 
-pub type Result = result::Result<(), FrameDecoderError>;
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            InvalidStreamId(offset) => write!(f, "invalid stream id at offset {}", offset),
+            InvalidAuxByte(offset) => write!(f, "invalid aux byte at offset {}", offset),
+            PartialFrame(offset) => write!(f, "partial frame at offset {}", offset),
+        }
+    }
+}
+
+use self::Error::*;
+
+pub type Result = result::Result<(), Error>;
 
 pub trait FrameConsumer {
     fn stream_byte(&mut self, stream: Option<u8>, data: u8);
