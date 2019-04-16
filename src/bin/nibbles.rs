@@ -1,8 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-use std::io::{ErrorKind, Read};
-use std::path::PathBuf;
+use std::io::{self, ErrorKind, Read};
 
 #[derive(Debug)]
 enum CliError {
@@ -24,7 +23,7 @@ impl fmt::Display for CliError {
 
 type Result<T> = std::result::Result<T, CliError>;
 
-impl std::convert::From<std::io::Error> for CliError {
+impl std::convert::From<io::Error> for CliError {
     fn from(err: std::io::Error) -> CliError {
         OtherError(format!("{}", err))
     }
@@ -48,14 +47,17 @@ where
 }
 
 fn run() -> Result<()> {
-    let paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    let paths: Vec<String> = std::env::args().skip(1).collect();
 
     if paths.is_empty() {
         return Err(UsageError(format!("No files specified")))?;
     }
 
     for path in paths {
-        let mut f = File::open(path)?;
+        let mut f = match File::open(&path) {
+            Ok(f) => f,
+            Err(err) => return Err(OtherError(format!("{}: {}", path, err))),
+        };
         process_stream(&mut f)?;
     }
 
