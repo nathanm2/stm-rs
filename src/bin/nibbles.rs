@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
@@ -40,37 +41,38 @@ impl std::convert::From<frame_decoder::Error> for CliError {
 
 // NibbleDump **********************************************************************************
 
-struct Stream {
-    id: Option<u8>,
-    total_bytes: usize,
-}
+type OffsetMap = HashMap<Option<u8>, usize>;
 
 struct NibbleFormat {
-    streams: Vec<Stream>,
-    prev_id: u8,
+    offsets: OffsetMap,
+    cur_id: Option<u8>, // Current Id
     col: usize,
+    line: String,
 }
 
 impl NibbleFormat {
     fn new() -> NibbleFormat {
         NibbleFormat {
-            streams: Vec::new(),
-            prev_id: 0,
+            offsets: OffsetMap::new(),
+            cur_id: None,
             col: 0,
+            line: String::with_capacity(160),
         }
     }
 }
 
-impl FrameConsumer for NibbleFormat {
-    fn stream_byte(&mut self, stream: Option<u8>, data: u8) {
-        let id = match stream {
-            None => return,
-            Some(id) => id,
-        };
+fn print_stream(stream_id: Option<u8>) {
+    match stream_id {
+        None => println!("Stream None:"),
+        Some(id) => println!("Stream {:#X}:", id),
+    }
+}
 
-        if id != self.prev_id {
-            println!("Stream {}", id);
-            self.prev_id = id;
+impl FrameConsumer for NibbleFormat {
+    fn stream_byte(&mut self, id: Option<u8>, data: u8) {
+        if id != self.cur_id {
+            display_stream(id);
+            self.cur_id = id;
         }
     }
 }
