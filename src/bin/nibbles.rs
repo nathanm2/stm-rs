@@ -41,39 +41,47 @@ impl std::convert::From<frame_decoder::Error> for CliError {
 
 // NibbleDump **********************************************************************************
 
-type OffsetMap = HashMap<Option<u8>, usize>;
-
 struct NibbleFormat {
-    offsets: OffsetMap,
+    offsets: HashMap<Option<u8>, usize>,
     cur_id: Option<u8>, // Current Id
+    cur_offset: usize,
     col: usize,
-    line: String,
 }
 
 impl NibbleFormat {
     fn new() -> NibbleFormat {
         NibbleFormat {
-            offsets: OffsetMap::new(),
-            cur_id: None,
+            offsets: HashMap::new(),
+            cur_id: Some(0xFF), // Intentionally set to an invalid Stream ID.
+            cur_offset: 0,
             col: 0,
-            line: String::with_capacity(160),
         }
-    }
-}
-
-fn print_stream(stream_id: Option<u8>) {
-    match stream_id {
-        None => println!("Stream None:"),
-        Some(id) => println!("Stream {:#X}:", id),
     }
 }
 
 impl FrameConsumer for NibbleFormat {
     fn stream_byte(&mut self, id: Option<u8>, data: u8) {
         if id != self.cur_id {
-            display_stream(id);
+            self.offsets.insert(self.cur_id, self.cur_offset);
+            self.cur_offset = *self.offsets.entry(id).or_insert(0);
+            self.col = 0;
             self.cur_id = id;
+            match id {
+                None => print!("\n\nStream None:"),
+                Some(id) => print!("\n\nStream {:#X}:", id),
+            }
         }
+
+        if self.col % 16 == 0 {
+            print!("\n{:012X} |", self.cur_offset * 2);
+            self.col = 0;
+        } else if self.col == 8 {
+            print!(" ");
+        }
+        print!(" {:x} {:x}", data & 0xF, data >> 4);
+
+        self.col += 1;
+        self.cur_offset += 1;
     }
 }
 
@@ -81,13 +89,13 @@ impl FrameConsumer for NibbleFormat {
 
 const DEFAULT_BUF_SIZE: usize = 4 * 1024;
 
-fn process_stream<R: ?Sized>(
+fn process_stream<R>(
     reader: &mut R,
     decoder: &mut FrameDecoder,
     fmt: &mut NibbleFormat,
 ) -> Result<()>
 where
-    R: Read,
+    R: ?Sized + Read,
 {
     let mut buf = [0; DEFAULT_BUF_SIZE];
     let mut total = 0;
