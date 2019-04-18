@@ -60,25 +60,25 @@ impl NibbleFormat {
 }
 
 impl FrameConsumer for NibbleFormat {
-    fn stream_byte(&mut self, id: Option<u8>, data: u8) {
+    fn stream_byte(&mut self, id: Option<u8>, _data: u8) {
         if id != self.cur_id {
             self.offsets.insert(self.cur_id, self.cur_offset);
             self.cur_offset = *self.offsets.entry(id).or_insert(0);
             self.col = 0;
             self.cur_id = id;
-            match id {
-                None => print!("\n\nStream None:"),
-                Some(id) => print!("\n\nStream {:#X}:", id),
-            }
+            //match id {
+            //    None => print!("\n\nStream None:"),
+            //    Some(id) => print!("\n\nStream {:#X}:", id),
+            //}
         }
 
         if self.col % 16 == 0 {
-            print!("\n{:012X} |", self.cur_offset * 2);
+            // print!("\n{:012X} |", self.cur_offset * 2);
             self.col = 0;
         } else if self.col == 8 {
-            print!(" ");
+            // print!(" ");
         }
-        print!(" {:x} {:x}", data & 0xF, data >> 4);
+        // print!(" {:x} {:x}", data & 0xF, data >> 4);
 
         self.col += 1;
         self.cur_offset += 1;
@@ -106,7 +106,7 @@ where
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(CliError::from(e)),
         };
-        decoder.decode(&buf[..len], fmt, total)?;
+        decoder.decode_unsafe(&buf[..len], fmt, total);
         total += len;
     }
 }
