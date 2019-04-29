@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, ErrorKind, Read};
-use stm::frame_decoder::{self, FrameConsumer, FrameDecoder};
+use stm_core::frame_decoder::{self, FrameConsumer, FrameDecoder};
 
 // CliError *************************************************************************************
 
@@ -131,7 +131,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-const PROG_NAME: &str = "nibbles";
+const PROG_NAME: &str = "stm-cli";
 
 fn display_usage() {
     println!("usage: {} [OPTIONS] [FILE ...]", PROG_NAME);
