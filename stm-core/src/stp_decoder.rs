@@ -28,7 +28,7 @@ impl StpDecoder {
         }
     }
 
-    pub fn decode<F>(&mut self, bytes: &[u8], mut handler: F)
+    pub fn decode_bytes<F>(&mut self, bytes: &[u8], mut handler: F)
     where
         F: FnMut(Packet),
     {
@@ -38,16 +38,16 @@ impl StpDecoder {
         }
     }
 
-    fn decode_nibble<F>(&mut self, nibble: u8, handler: &mut F)
+    fn decode_nibble<F>(&mut self, nibble: u8, mut handler: F)
     where
         F: FnMut(Packet),
     {
-        // An ASYNC can happen anywhere within the stream, so we test for that first:
-        self.async_filter(nibble, handler);
+        // An ASYNC can appear anywhere within the stream, so we need to check for it first:
+        self.async_filter(nibble, &mut handler);
         self.nibble_offset += 1;
     }
 
-    fn async_filter<F>(&mut self, nibble: u8, handler: &mut F)
+    fn async_filter<F>(&mut self, nibble: u8, mut handler: F)
     where
         F: FnMut(Packet),
     {
@@ -55,29 +55,29 @@ impl StpDecoder {
             if self.f_count < 21 {
                 self.f_count += 1;
             } else {
-                self.process(0xf, handler);
+                self.process(0xf, &mut handler);
             }
         } else {
             if nibble == 0 && self.f_count == 21 {
-                self.process_async(handler);
+                self.process_async(&mut handler);
             } else {
                 for _ in 0..self.f_count {
-                    self.process(0xf, handler);
+                    self.process(0xf, &mut handler);
                 }
-                self.process(nibble, handler);
+                self.process(nibble, &mut handler);
             }
             self.f_count = 0;
         }
     }
 
-    fn process_async<F>(&mut self, _handler: &mut F)
+    fn process_async<F>(&mut self, mut _handler: F)
     where
         F: FnMut(Packet),
     {
-        self.to_opcode();
+        self.set_state(OpCode);
     }
 
-    fn process<F>(&mut self, _nibble: u8, _handler: &mut F)
+    fn process<F>(&mut self, _nibble: u8, mut _handler: F)
     where
         F: FnMut(Packet),
     {
