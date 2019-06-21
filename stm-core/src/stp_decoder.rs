@@ -1,40 +1,36 @@
 use std::fmt;
 use std::result;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Error {
-    InvalidAsync {
-        nibble_offset: u64,
-        invalid_nibble: u8,
-    },
+    InvalidAsync { offset: u64, value: u8 },
 }
+
+use self::Error::*;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            InvalidAsync {
-                nibble_offset,
-                invalid_nibble,
-            } => write!(
+            InvalidAsync { offset, value } => write!(
                 f,
-                "Invalid async packet. Nibble offset: {}, Nibble: {}",
-                nibble_offset, invalid_nibble
+                "Invalid async packet. Offset: {}, Value: {}",
+                offset, value
             ),
         }
     }
 }
 
-use self::Error::*;
-
 pub struct Packet {
-    pub offset: u64,
-    pub lenth: u64,
-    pub ptype: PacketType,
+    pub start: u64, // Starting offset in nibbles.
+    pub span: u64,
+    pub details: PacketDetails,
 }
 
-pub enum PacketType {
+pub enum PacketDetails {
     Async,
 }
+
+use self::PacketDetails::*;
 
 pub type Result = result::Result<Packet, Error>;
 
@@ -47,10 +43,10 @@ enum DecoderState {
 use self::DecoderState::*;
 
 pub struct StpDecoder {
-    nibble_offset: u64,  // Offset in nibbles.
+    offset: u64,         // Offset in nibbles.
     f_count: u8,         // Number of consecutive 0xF nibbles.
     state: DecoderState, // The state of the decoder.
-    packet_start: u64,
+    packet_len: u64,
 }
 
 const ASYNC_F_COUNT: u8 = 21;
@@ -59,7 +55,7 @@ impl StpDecoder {
     /// Create a new StpDecoder.
     pub fn new() -> Self {
         StpDecoder {
-            nibble_offset: 0,
+            offset: 0,
             f_count: 0,
             state: Unsynced,
             packet_start: 0,
@@ -110,18 +106,28 @@ impl StpDecoder {
             }
             self.f_count = 0;
         }
-        self.nibble_offset += 1;
+        self.offset += 1;
     }
 
-    fn process_async(&mut self, _handler: &mut dyn FnMut(Result)) {
+    fn enter_state(&mut self, state: DecoderState) {
+        match state {
+            OpCode
+    }
+    fn process_async(&mut self, handler: &mut dyn FnMut(Result)) {
         self.state = OpCode;
+        
+        handler(Ok(Packet {
+            start: self.offset - ASYNC_F_COUNT as u64,
+            span: (ASYNC_F_COUNT + 1) as u64,
+            details: Async,
+        }));
     }
 
-    fn process_invalid_async(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+    fn process_invalid_async(&mut self, value: u8, handler: &mut dyn FnMut(Result)) {
         self.state = Unsynced;
         handler(Err(InvalidAsync {
-            nibble_offset: self.nibble_offset - ASYNC_F_COUNT as u64,
-            invalid_nibble: nibble,
+            offset: self.offset,
+            value: value,
         }));
     }
 
@@ -135,6 +141,6 @@ impl StpDecoder {
 
     fn to_opcode(&mut self) {
         self.state = OpCode;
-        self.packet_start = self.nibble_offset;
+        self.packet_start = self.offset;
     }
 }
