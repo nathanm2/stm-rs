@@ -3,7 +3,8 @@ use std::result;
 
 #[derive(Debug)]
 pub enum Error {
-    InvalidAsync { offset: u64, value: u8 },
+    InvalidAsync { start: u64, value: u8 },
+    TruncatedPacket { start: u64, span: u64 },
 }
 
 use self::Error::*;
@@ -11,14 +12,26 @@ use self::Error::*;
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            InvalidAsync { offset, value } => write!(
+            InvalidAsync { start, value } => write!(
                 f,
-                "Invalid async packet. Offset: {}, Value: {}",
-                offset, value
+                "Invalid async packet. Start: {}, Value: {}",
+                start, value
             ),
+            TruncatedPacket { start, span } => {
+                write!(f, "Truncated packet. Start: {}, Span: {}", start, span)
+            }
         }
     }
 }
+
+pub enum OpCode {
+    NULLOpCode = 0x0,
+    M8 = 0x1,
+    MERR = 0x2,
+    C8 = 0x3,
+}
+
+use self::OpCode::*;
 
 pub struct Packet {
     pub start: u64, // Starting offset in nibbles.
@@ -46,7 +59,7 @@ pub struct StpDecoder {
     offset: u64,         // Offset in nibbles.
     f_count: u8,         // Number of consecutive 0xF nibbles.
     state: DecoderState, // The state of the decoder.
-    packet_len: u64,
+    span: u64,           // Current packet span in nibbles.
 }
 
 const ASYNC_F_COUNT: u8 = 21;
@@ -58,7 +71,7 @@ impl StpDecoder {
             offset: 0,
             f_count: 0,
             state: Unsynced,
-            packet_start: 0,
+            span: 0,
         }
     }
 
@@ -109,38 +122,58 @@ impl StpDecoder {
         self.offset += 1;
     }
 
-    fn enter_state(&mut self, state: DecoderState) {
-        match state {
-            OpCode
+    fn to_state(&mut self, new_state: DecoderState) {
+        match new_state {
+            Unsynced | OpCode => self.span = 0,
+            Payload => (),
+        }
+        self.state = new_state;
     }
+
+    fn report_truncation(&mut self, handler: &mut dyn FnMut(Result)) {
+        if self.span > 0 {
+            handler(Err(TruncatedPacket {
+                start: self.offset - self.span,
+                span: self.span,
+            }));
+        }
+    }
+
     fn process_async(&mut self, handler: &mut dyn FnMut(Result)) {
-        self.state = OpCode;
-        
+        self.report_truncation(handler);
         handler(Ok(Packet {
             start: self.offset - ASYNC_F_COUNT as u64,
             span: (ASYNC_F_COUNT + 1) as u64,
             details: Async,
         }));
+        self.to_state(OpCode);
     }
 
     fn process_invalid_async(&mut self, value: u8, handler: &mut dyn FnMut(Result)) {
-        self.state = Unsynced;
+        self.report_truncation(handler);
         handler(Err(InvalidAsync {
-            offset: self.offset,
+            start: self.offset - ASYNC_F_COUNT as u64,
             value: value,
         }));
+        self.to_state(Unsynced);
     }
 
-    fn process(&mut self, _nibble: u8, _handler: &mut dyn FnMut(Result)) {
+    fn process(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         match self.state {
             Unsynced => (),
-            OpCode => (),
+            OpCode => self.process_opcode(nibble, handler),
             Payload => (),
         }
     }
 
-    fn to_opcode(&mut self) {
-        self.state = OpCode;
-        self.packet_start = self.offset;
+    fn process_opcode(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+        match self.span {
+            0 => match nibble {
+                0 => return;  // NULL packet.
+                1 => self.packet_setup(M8, 2, false);
+                2 => self.packet_setup(MERR, 2, false);
+                3 => self.packet_setup(C8, 2, false);
+                }
+            }
+        }
     }
-}
