@@ -35,12 +35,26 @@ pub enum OpCode {
     D32 = 0x6,
     D64 = 0x7,
     D8MTS = 0x8,
-    D16MTS = 0x09,
-    D32MTS = 0x0A,
-    D64MTS = 0x0B,
-    D4 = 0x0C,
-    D4MTS = 0x0D,
-    FLAG_TS = 0x0E,
+    D16MTS = 0x9,
+    D32MTS = 0xA,
+    D64MTS = 0xB,
+    D4 = 0xC,
+    D4MTS = 0xD,
+    FLAG_TS = 0xE,
+    M16 = 0xF1,
+    GERR = 0xF2,
+    C16 = 0xF3,
+    D8TS = 0xF4,
+    D16TS = 0xF5,
+    D32TS = 0xF6,
+    D64TS = 0xF7,
+    D8M = 0xF8,
+    D16M = 0xF9,
+    D32M = 0xFA,
+    D64M = 0xFB,
+    D4TS = 0xFC,
+    D4M = 0xFD,
+    FLAG = 0xFE,
     VERSION = 0xF00,
 }
 
@@ -62,6 +76,7 @@ use self::PacketDetails::*;
 
 pub type Result = result::Result<Packet, Error>;
 
+#[derive(PartialEq)]
 enum DecoderState {
     Unsynced,
     OpCode,
@@ -125,12 +140,13 @@ impl StpDecoder {
 
     fn decode_nibble(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         // An ASYNC can appear anywhere within the stream, so every 0xf nibble needs to be buffered
-        // just in case it's part of one.
+        // until a either a non-0xf nibble is encountered, or ASYNC_F_COUNT number of 0xf nibbles
+        // are encountered.  In the latter case we can process the overflow.
         if nibble == 0xf {
             if self.f_count < ASYNC_F_COUNT {
                 self.f_count += 1;
             } else {
-                self.process(0xf, handler);
+                self.process_nibble(0xf, handler);
             }
         } else {
             if self.f_count == ASYNC_F_COUNT {
@@ -141,9 +157,9 @@ impl StpDecoder {
                 }
             } else {
                 for _ in 0..self.f_count {
-                    self.process(0xf, handler);
+                    self.process_nibble(0xf, handler);
                 }
-                self.process(nibble, handler);
+                self.process_nibble(nibble, handler);
             }
             self.f_count = 0;
         }
@@ -179,7 +195,7 @@ impl StpDecoder {
     }
 
     fn report_truncation(&mut self, handler: &mut dyn FnMut(Result)) {
-        if self.span > 0 {
+        if self.state != Unsynced && self.span > 0 {
             handler(Err(TruncatedPacket {
                 start: self.offset - self.span as u64,
                 span: self.span,
@@ -187,7 +203,8 @@ impl StpDecoder {
         }
     }
 
-    fn process(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+    fn process_nibble(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+        self.span += 1;
         match self.state {
             Unsynced => return,
             OpCode => self.process_opcode(nibble, handler),
@@ -198,20 +215,49 @@ impl StpDecoder {
 
     fn process_opcode(&mut self, nibble: u8, _handler: &mut dyn FnMut(Result)) {
         match self.span {
-            0 => match nibble {
-                0 => return, // NULL packet.
-                1 => self.packet_setup(M8, 2, false),
-                2 => self.packet_setup(MERR, 2, false),
-                3 => self.packet_setup(C8, 2, false),
-                _ => return,
+            0 => panic!("Unexpected span"),
+            1 => match nibble {
+                0x0 => self.to_state(OpCode), // NULL packet.
+                0x1 => self.data_setup(M8, 2, false),
+                0x2 => self.data_setup(MERR, 2, false),
+                0x3 => self.data_setup(C8, 2, false),
+                0x4 => self.data_setup(D8, 2, false),
+                0x5 => self.data_setup(D16, 4, false),
+                0x6 => self.data_setup(D32, 8, false),
+                0x7 => self.data_setup(D64, 16, false),
+                0x8 => self.data_setup(D8MTS, 2, true),
+                0x9 => self.data_setup(D16MTS, 4, true),
+                0xA => self.data_setup(D32MTS, 8, true),
+                0xB => self.data_setup(D64MTS, 8, true),
+                0xC => self.data_setup(D4, 1, false),
+                0xD => self.data_setup(D4MTS, 1, true),
+                0xE => self.data_setup(FLAG_TS, 0, true),
+                0xF => return,
+                _ => panic!("Invalid nibble value: {}", nibble),
             },
+            2 => match nibble {
+                0x0 => return,
+                0x1 => self.data_setup(M16, 4, false),
+                0x2 => self.data_setup(GERR, 2, false),
+                0x3 => self.data_setup(C16, 4, false),
+                0x4 => self.data_setup(D8TS, 2, true),
+                0x5 => self.data_setup(D16TS, 4, true),
+                0x6 => self.data_setup(D32TS, 8, true),
+                0x7 => self.data_setup(D64TS, 16, true),
+                0x8 => self.data_setup(D8M, 2, false),
+                0x9 => self.data_setup(D16M, 4, false),
+                0xA => self.data_setup(D32M, 8, false),
+                0xB => self.data_setup(D64M, 8, false),
+                0xC => self.data_setup(D4TS, 1, true),
+                0xD => self.data_setup(D4M, 1, false),
+                0xE => self.report_packet(FLAG),
+                _ => panic!("Invalid nibble value: {}", nibble),
+
             _ => return,
         }
-
-        self.span += 1;
     }
 
-    fn packet_setup(&mut self, op_code: OpCode, payload_sz: u8, has_timestamp: bool) {
+    fn data_setup(&mut self, op_code: OpCode, payload_sz: u8, has_timestamp: bool) {
         self.op_code = Some(op_code);
         self.payload_sz = payload_sz;
         self.has_timestamp = has_timestamp;
