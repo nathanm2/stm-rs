@@ -5,6 +5,7 @@ use std::result;
 pub enum Error {
     InvalidAsync { start: u64, value: u8 },
     TruncatedPacket { start: u64, span: u8 },
+    InvalidOpCode { start: u64, span: u8, opcode: u16 },
 }
 
 use self::Error::*;
@@ -20,6 +21,15 @@ impl fmt::Display for Error {
             TruncatedPacket { start, span } => {
                 write!(f, "Truncated packet. Start: {}, Span: {}", start, span)
             }
+            InvalidOpCode {
+                start,
+                span,
+                opcode,
+            } => write!(
+                f,
+                "Invalid OpCode. Start: {}, Span: {}, OpCode: {:x}",
+                start, span, opcode
+            ),
         }
     }
 }
@@ -139,6 +149,8 @@ impl StpDecoder {
     }
 
     fn decode_nibble(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+        assert!(nibble & 0xF0 == 0x00);
+
         // An ASYNC can appear anywhere within the stream, so every 0xf nibble needs to be buffered
         // until a either a non-0xf nibble is encountered, or ASYNC_F_COUNT number of 0xf nibbles
         // are encountered.  In the latter case we can process the overflow.
@@ -185,6 +197,15 @@ impl StpDecoder {
         self.to_state(Unsynced);
     }
 
+    fn process_invalid_opcode(&mut self, opcode: u16, handler: &mut dyn FnMut(Result)) {
+        handler(Err(InvalidOpCode {
+            start: self.offset + 1 - self.span as u64,
+            span: self.span,
+            opcode: opcode,
+        }));
+        self.to_state(Unsynced);
+    }
+
     fn to_state(&mut self, new_state: DecoderState) {
         match new_state {
             Unsynced | OpCode => self.span = 0,
@@ -197,7 +218,7 @@ impl StpDecoder {
     fn report_truncation(&mut self, handler: &mut dyn FnMut(Result)) {
         if self.state != Unsynced && self.span > 0 {
             handler(Err(TruncatedPacket {
-                start: self.offset - self.span as u64,
+                start: self.offset - (self.span + ASYNC_F_COUNT) as u64,
                 span: self.span,
             }));
         }
@@ -213,7 +234,7 @@ impl StpDecoder {
         }
     }
 
-    fn process_opcode(&mut self, nibble: u8, _handler: &mut dyn FnMut(Result)) {
+    fn process_opcode(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         match self.span {
             0 => panic!("Unexpected span"),
             1 => match nibble {
@@ -233,7 +254,7 @@ impl StpDecoder {
                 0xD => self.data_setup(D4MTS, 1, true),
                 0xE => self.data_setup(FLAG_TS, 0, true),
                 0xF => return,
-                _ => panic!("Invalid nibble value: {}", nibble),
+                _ => panic!("Not a nibble: {}", nibble),
             },
             2 => match nibble {
                 0x0 => return,
@@ -250,9 +271,10 @@ impl StpDecoder {
                 0xB => self.data_setup(D64M, 8, false),
                 0xC => self.data_setup(D4TS, 1, true),
                 0xD => self.data_setup(D4M, 1, false),
-                0xE => self.report_packet(FLAG),
-                _ => panic!("Invalid nibble value: {}", nibble),
-
+                0xE => self.finish_packet(FLAG, handler),
+                0xF => self.process_invalid_opcode(0xFF, handler),
+                _ => panic!("Not a nibble: {}", nibble),
+            },
             _ => return,
         }
     }
@@ -267,9 +289,11 @@ impl StpDecoder {
         } else if has_timestamp == true {
             self.to_state(Timestamp);
         } else {
-            panic!("Invalid packet_setup");
+            panic!("Not a data packet.");
         }
     }
+
+    fn finish_packet(&mut self, op_code: OpCode, handler: &mut dyn FnMut(Result)) {}
 
     fn process_payload(&mut self, _nibble: u8, _handler: &mut dyn FnMut(Result)) {}
 }
