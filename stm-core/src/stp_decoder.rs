@@ -6,6 +6,7 @@ pub enum Error {
     InvalidAsync { start: u64, value: u8 },
     TruncatedPacket { start: u64, span: u8 },
     InvalidOpCode { start: u64, span: u8, opcode: u16 },
+    InvalidTimestampType { start: u64, value: u8 },
 }
 
 use self::Error::*;
@@ -29,6 +30,11 @@ impl fmt::Display for Error {
                 f,
                 "Invalid OpCode. Start: {}, Span: {}, OpCode: {:x}",
                 start, span, opcode
+            ),
+            InvalidTimestampType { start, value } => write!(
+                f,
+                "Invalid timestamp type. Start: {}, Value: {}",
+                start, value
             ),
         }
     }
@@ -70,6 +76,23 @@ pub enum OpCode {
 
 use self::OpCode::*;
 
+#[allow(non_camel_case_types)]
+#[derive(Debug, PartialEq)]
+pub enum TimestampType {
+    STPv1 = 1,
+    STPv2NATDELTA = 2,
+    STPv2NAT = 3,
+    STPv2GRAY = 4,
+}
+
+use self::TimestampType::*;
+
+#[derive(Debug, PartialEq)]
+pub enum NibbleOrder {
+    BigEndian = 0,
+    LittleEndian = 1,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Packet {
     pub start: u64, // Starting offset in nibbles.
@@ -80,6 +103,11 @@ pub struct Packet {
 #[derive(Debug, PartialEq)]
 pub enum PacketDetails {
     Async,
+    Version {
+        ts_type: TimestampType,
+        order: NibbleOrder,
+        stp_version: f32,
+    },
 }
 
 use self::PacketDetails::*;
@@ -92,6 +120,7 @@ enum DecoderState {
     OpCode,
     Payload,
     Timestamp,
+    VersionDecode,
 }
 
 use self::DecoderState::*;
@@ -101,13 +130,18 @@ pub struct StpDecoder {
     f_count: u8,         // Number of consecutive 0xF nibbles.
     state: DecoderState, // The state of the decoder.
 
-    /** Current Packet: **/
-    span: u8, // Current packet span in nibbles.
-    op_code: Option<OpCode>, // Current packet OpCode.
-    payload_sz: u8,          // Current packet payload size (nibbles).
-    has_timestamp: bool,     // Current packet has a timestamp.
-    payload: u64,            // Current packet payload.
-    timestamp: u64,          // Current packet timestamp.
+    // Current Packet:
+    start: u64,             // Current packet's starting offset in nibbles.
+    span: u8,               // Current packet's span in nibbles.
+    opcode: Option<OpCode>, // Current packet's op code.
+    payload_sz: u8,         // Current packet's payload size (nibbles).
+    payload_index: u8,      // Current payload index (nibbles).
+    payload: u64,           // Current packet's payload.
+    has_timestamp: bool,    // Current packet has a timestamp.
+    timestamp: u64,         // Current packet's timestamp.
+
+    // Version Info:
+    ts_type: Option<TimestampType>,
 }
 
 const ASYNC_F_COUNT: u8 = 21;
@@ -119,12 +153,15 @@ impl StpDecoder {
             offset: 0,
             f_count: 0,
             state: Unsynced,
+            start: 0,
             span: 0,
-            op_code: None,
+            opcode: None,
             payload_sz: 0,
+            payload_index: 0,
             payload: 0,
             has_timestamp: false,
             timestamp: 0,
+            ts_type: None,
         }
     }
 
@@ -199,7 +236,7 @@ impl StpDecoder {
 
     fn process_invalid_opcode(&mut self, opcode: u16, handler: &mut dyn FnMut(Result)) {
         handler(Err(InvalidOpCode {
-            start: self.offset + 1 - self.span as u64,
+            start: self.start,
             span: self.span,
             opcode: opcode,
         }));
@@ -208,9 +245,14 @@ impl StpDecoder {
 
     fn to_state(&mut self, new_state: DecoderState) {
         match new_state {
-            Unsynced | OpCode => self.span = 0,
+            Unsynced => (),
+            OpCode => {
+                self.span = 0;
+                self.start = self.offset + 1;
+            }
             Payload => self.payload = 0,
             Timestamp => self.timestamp = 0,
+            VersionDecode => self.ts_type = None,
         }
         self.state = new_state;
     }
@@ -218,7 +260,7 @@ impl StpDecoder {
     fn report_truncation(&mut self, handler: &mut dyn FnMut(Result)) {
         if self.state != Unsynced && self.span > 0 {
             handler(Err(TruncatedPacket {
-                start: self.offset - (self.span + ASYNC_F_COUNT) as u64,
+                start: self.start,
                 span: self.span,
             }));
         }
@@ -231,12 +273,12 @@ impl StpDecoder {
             OpCode => self.process_opcode(nibble, handler),
             Payload => self.process_payload(nibble, handler),
             Timestamp => return,
+            VersionDecode => self.process_version(nibble, handler),
         }
     }
 
     fn process_opcode(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         match self.span {
-            0 => panic!("Unexpected span"),
             1 => match nibble {
                 0x0 => self.to_state(OpCode), // NULL packet.
                 0x1 => self.data_setup(M8, 2, false),
@@ -275,15 +317,21 @@ impl StpDecoder {
                 0xF => self.process_invalid_opcode(0xFF, handler),
                 _ => panic!("Not a nibble: {}", nibble),
             },
-            _ => return,
+            3 => match nibble {
+                0x0 => self.to_state(VersionDecode),
+                // TODO: Support remaining opcodes!
+                _ => self.process_invalid_opcode(0xF00 & nibble as u16, handler),
+            },
+            _ => panic!("Unexpected span: {}", self.span),
         }
     }
 
-    fn data_setup(&mut self, op_code: OpCode, payload_sz: u8, has_timestamp: bool) {
-        self.op_code = Some(op_code);
+    fn data_setup(&mut self, opcode: OpCode, payload_sz: u8, has_timestamp: bool) {
+        self.opcode = Some(opcode);
         self.payload_sz = payload_sz;
         self.has_timestamp = has_timestamp;
 
+        // Next state:
         if payload_sz > 0 {
             self.to_state(Payload);
         } else if has_timestamp == true {
@@ -293,7 +341,24 @@ impl StpDecoder {
         }
     }
 
-    fn finish_packet(&mut self, op_code: OpCode, handler: &mut dyn FnMut(Result)) {}
+    fn process_version(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+        match nibble & 0x07 {
+            0x0 | 0x1 => self.ts_type = Some(STPv1),
+            0x2 => self.ts_type = Some(STPv2NATDELTA),
+            0x3 => self.ts_type = Some(STPv2NAT),
+            0x4 => self.ts_type = Some(STPv2GRAY),
+            value => {
+                handler(Err(InvalidTimestampType {
+                    start: self.start,
+                    value: value,
+                }));
+                self.to_state(Unsynced);
+                return;
+            }
+        }
+    }
+
+    fn finish_packet(&mut self, opcode: OpCode, handler: &mut dyn FnMut(Result)) {}
 
     fn process_payload(&mut self, _nibble: u8, _handler: &mut dyn FnMut(Result)) {}
 }
