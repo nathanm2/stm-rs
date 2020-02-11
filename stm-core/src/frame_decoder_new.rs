@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::fmt;
 use std::result;
 
@@ -28,6 +29,46 @@ impl fmt::Display for Error {
 
 pub type Result = result::Result<Option<u8>, Error>;
 
+/// Decode a series of frames.
+///
+/// # Arguments
+///
+///  * `frames` - A stream of bytes representing contiguous 16 byte frames.
+///  * `stream` - The starting stream ID.
+///  * `data` - Data handler closure. This closure takes two arguments: a stream ID and a
+///             single byte of data associated with that stream ID.
+///  * `error` - Error handler.  This is closure that takes an Error and returns a Result.  If the
+///              Result is an Error, decoding will be halted, otherwise decoding will continue.
+pub fn decode_frames<D, E>(
+    frames: &[u8],
+    stream_id: Option<u8>,
+    mut data: D,
+    mut error: E,
+) -> Result
+where
+    D: FnMut(Option<u8>, u8),
+    E: FnMut(Error) -> result::Result<(), Error>,
+{
+    let mut id = stream_id;
+    let mut offset = 0;
+    let mut iter = frames.chunks_exact(16);
+
+    for frame in &mut iter {
+        id = decode_frame(frame.try_into().unwrap(), id, &mut data, &mut error)?;
+        offset += 16;
+    }
+
+    let remainder = iter.remainder().len();
+    if remainder > 0 {
+        error(Error {
+            offset: offset,
+            reason: PartialFrame(remainder),
+        })?;
+    }
+
+    Ok(id)
+}
+
 /// Decode a single frame of data.
 ///
 /// # Arguments
@@ -41,7 +82,7 @@ pub type Result = result::Result<Option<u8>, Error>;
 ///
 pub fn decode_frame<D, E>(
     frame: &[u8; 16],
-    mut stream: Option<u8>,
+    stream_id: Option<u8>,
     mut data: D,
     mut error: E,
 ) -> Result
@@ -58,7 +99,7 @@ where
         })?;
     }
 
-    let mut cur_stream = stream;
+    let mut cur_stream = stream_id;
     let mut next_stream = None;
 
     for (i, byte) in frame[..15].iter().enumerate() {
@@ -94,7 +135,7 @@ where
     }
 
     match next_stream {
-        Some(s) => Ok(next_stream),
+        Some(_) => Ok(next_stream),
         None => Ok(cur_stream),
     }
 }

@@ -5,3 +5,5 @@ fn error_display() {
     let frame = [0; 16];
     decode_frame(&frame, None);
 }
+
+type DataMap = HashMap<Option<u8>, Vec<u8>>;
