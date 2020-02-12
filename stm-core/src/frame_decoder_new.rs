@@ -54,7 +54,10 @@ where
     let mut iter = frames.chunks_exact(16);
 
     for frame in &mut iter {
-        id = decode_frame(frame.try_into().unwrap(), id, &mut data, &mut error)?;
+        id = decode_frame(frame.try_into().unwrap(), id, &mut data, |mut e| {
+            e.offset += offset;
+            error(e)
+        })?;
         offset += 16;
     }
 
