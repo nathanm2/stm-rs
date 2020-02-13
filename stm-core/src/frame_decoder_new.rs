@@ -97,7 +97,7 @@ where
 
     if aux_byte & 0x80 == 0x80 && frame[14] & 0x01 == 0x01 {
         error(Error {
-            offset: 0x15,
+            offset: 15,
             reason: InvalidAuxByte(aux_byte),
         })?;
     }
