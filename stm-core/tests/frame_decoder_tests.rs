@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use stm_core::frame_builder::*;
-use stm_core::frame_decoder_new::{decode_frames, Error, ErrorReason::*};
+use stm_core::frame_decoder::{decode_frames, Error, ErrorReason::*};
 
 trait DataMap {
     fn save(&mut self, id: Option<u8>, data: u8);
@@ -30,6 +30,57 @@ fn partial_frame() {
 
     let mut expected = HashMap::new();
     expected.insert(None, vec![0; 15]);
+
+    assert_eq!(map, expected);
+}
+
+// Put an invalid id within the stream:
+#[test]
+fn bad_id() {
+    let mut frames = [0; 32];
+    let mut map = HashMap::new();
+
+    frames[0] = 0x03;
+    frames[16] = 0xFF;
+    assert_eq!(
+        decode_frames(&frames, None, |id, data| map.save(id, data), |e| Err(e)),
+        Err(Error {
+            offset: 16,
+            reason: InvalidStreamId(0x7F)
+        })
+    );
+
+    let mut expected = HashMap::new();
+    expected.insert(Some(1), vec![0; 14]);
+
+    assert_eq!(map, expected);
+}
+
+// Put an invalid id within the stream (continue on)
+#[test]
+fn bad_id_continue() {
+    let mut frames = [0; 32];
+    let mut map = HashMap::new();
+    let mut errors = Vec::new();
+
+    frames[0] = 0x03;
+    frames[16] = 0xFF;
+    assert_eq!(
+        decode_frames(
+            &frames,
+            None,
+            |id, data| map.save(id, data),
+            |e| {
+                errors.push(e);
+                Ok(())
+            }
+        ),
+        Ok(Some(127))
+    );
+
+    let mut expected = HashMap::new();
+    expected.insert(Some(1), vec![0; 14]);
+    expected.insert(Some(0x7F), vec![0; 14]);
 
     assert_eq!(map, expected);
 }
