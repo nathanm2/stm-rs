@@ -52,17 +52,40 @@ pub enum TimestampType {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, PartialEq)]
+pub enum Timestamp {
+    STPv1 { value: u8 },
+    STPv2NATDELTA { length: u8, value: u64 },
+    STPv2NAT { length: u8, value: u64 },
+    STPv2GRAY { length: u8, value: u64 },
+}
+
+#[derive(Debug)]
 pub enum Packet {
-    NULL,
-    M8 {
-        master: u8,
+    Async,
+    Null {
+        timestamp: Option<Timestamp>,
     },
-    C8 {
-        channel: u8,
-    },
-    VERSION {
-        ts_type: TimestampType,
-        is_le: bool, // Is little endian ?
+    Version {
         version: StpVersion,
+        ts_type: TimestampType,
+        is_le: bool,
+    },
+    Master {
+        opcode: OpCode,
+        master: u16,
+    },
+    Channel {
+        opcode: OpCode,
+        channel: u16,
+    },
+    Data {
+        opcode: OpCode,
+        data: u64,
+        timestamp: Option<Timestamp>,
+    },
+    Frequency {
+        opcode: OpCode,
+        frequency: u64,
+        timestamp: Option<Timestamp>,
     },
 }
