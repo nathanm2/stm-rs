@@ -7,7 +7,7 @@ pub enum StpVersion {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum OpCode {
     NULL = 0x0,
     M8 = 0x1,
@@ -42,9 +42,9 @@ pub enum OpCode {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum TimestampType {
-    STPv1 = 1,
+    STPv1LEGACY = 1,
     STPv2NATDELTA = 2,
     STPv2NAT = 3,
     STPv2GRAY = 4,
@@ -88,4 +88,5 @@ pub enum Packet {
         frequency: u64,
         timestamp: Option<Timestamp>,
     },
+    Flag,
 }
