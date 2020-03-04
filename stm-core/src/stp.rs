@@ -59,7 +59,7 @@ pub enum Timestamp {
     STPv2GRAY { length: u8, value: u64 },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Packet {
     Async,
     Null {

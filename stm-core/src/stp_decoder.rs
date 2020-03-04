@@ -20,6 +20,7 @@ pub struct Error {
     pub span: usize,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Packet {
     pub packet: stp::Packet, // Packet type.
     pub start: usize,        // Packet's starting nibble offset.
@@ -140,7 +141,7 @@ impl StpDecoder {
 
     fn handle_async(&mut self, handler: &mut dyn FnMut(Result)) {
         // Report truncated packets (if any):
-        self.truncated_packet_check(handler);
+        self.truncated_packet_check(self.offset - ASYNC_F_COUNT as usize, handler);
 
         // Report the async packet:
         handler(Ok(Packet {
@@ -160,7 +161,7 @@ impl StpDecoder {
 
     fn handle_invalid_async(&mut self, bad_nibble: u8, handler: &mut dyn FnMut(Result)) {
         // Report truncated packets (if any):
-        self.truncated_packet_check(handler);
+        self.truncated_packet_check(self.offset - ASYNC_F_COUNT as usize, handler);
 
         // Report the error:
         handler(Err(Error {
@@ -173,19 +174,20 @@ impl StpDecoder {
         self.set_state(Unsynced);
     }
 
-    fn truncated_packet_check(&mut self, handler: &mut dyn FnMut(Result)) {
+    fn truncated_packet_check(&mut self, offset: usize, handler: &mut dyn FnMut(Result)) {
         if let Unsynced = self.state {
             return;
         } else if self.span == 0 {
             return;
         }
 
-        self.report_error(
-            TruncatedPacket {
+        handler(Err(Error {
+            reason: TruncatedPacket {
                 opcode: self.opcode,
             },
-            handler,
-        );
+            start: offset - self.span,
+            span: self.span,
+        }));
     }
 
     fn report_error(&mut self, reason: ErrorReason, handler: &mut dyn FnMut(Result)) {

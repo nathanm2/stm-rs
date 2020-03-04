@@ -1,4 +1,5 @@
-use stm_core::stp_decoder::{Error::*, Packet, PacketDetails, Result, StpDecoder};
+use stm_core::stp;
+use stm_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
 
 // Unsynced:
 #[test]
@@ -22,9 +23,9 @@ fn basic_async() {
     decoder.decode_bytes(&stream, |r| results.push(r));
 
     exp.push(Ok(Packet {
+        packet: stp::Packet::Async,
         start: 0,
         span: 22,
-        details: PacketDetails::Async,
     }));
 
     assert_eq!(results, exp);
@@ -40,9 +41,10 @@ fn invalid_async() {
 
     decoder.decode_bytes(&stream, |r| results.push(r));
 
-    exp.push(Err(InvalidAsync {
+    exp.push(Err(Error {
+        reason: InvalidAsync { bad_nibble: 1 },
         start: 0,
-        value: 0x01,
+        span: 22,
     }));
 
     assert_eq!(results, exp);
@@ -64,24 +66,31 @@ fn truncated_by_async() {
     let mut exp = Vec::<Result>::new();
     let mut decoder = StpDecoder::new();
     let mut stream = Vec::<u8>::with_capacity(46);
+    stream.push(0x1);
     stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.push(0x0);
     stream.push(0xF);
+    stream.push(0x0);
     stream.extend_from_slice(&ASYNC_NIBBLES);
 
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
     exp.push(Ok(Packet {
-        start: 0,
+        packet: stp::Packet::Async,
+        start: 1,
         span: 22,
-        details: PacketDetails::Async,
     }));
 
-    exp.push(Err(TruncatedPacket { start: 22, span: 1 }));
+    exp.push(Err(Error {
+        reason: TruncatedPacket { opcode: None },
+        start: 24,
+        span: 2,
+    }));
 
     exp.push(Ok(Packet {
-        start: 23,
+        packet: stp::Packet::Async,
+        start: 26,
         span: 22,
-        details: PacketDetails::Async,
     }));
     assert_eq!(results, exp);
 }
@@ -99,17 +108,23 @@ fn truncated_by_invalid_async() {
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
     exp.push(Ok(Packet {
+        packet: stp::Packet::Async,
         start: 0,
         span: 22,
-        details: PacketDetails::Async,
     }));
 
-    exp.push(Err(TruncatedPacket { start: 22, span: 1 }));
+    exp.push(Err(Error {
+        reason: TruncatedPacket { opcode: None },
+        start: 22,
+        span: 1,
+    }));
 
-    exp.push(Err(InvalidAsync {
+    exp.push(Err(Error {
+        reason: InvalidAsync { bad_nibble: 1 },
         start: 23,
-        value: 0x01,
+        span: 22,
     }));
+
     assert_eq!(results, exp);
 }
 
@@ -128,21 +143,21 @@ fn invalid_opcode() {
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
     exp.push(Ok(Packet {
+        packet: stp::Packet::Async,
         start: 0,
         span: 22,
-        details: PacketDetails::Async,
     }));
 
-    exp.push(Err(InvalidOpCode {
+    exp.push(Err(Error {
+        reason: InvalidOpCode { value: 0xFF },
         start: 22,
         span: 2,
-        opcode: 0xFF,
     }));
 
     exp.push(Ok(Packet {
+        packet: stp::Packet::Async,
         start: 24,
         span: 22,
-        details: PacketDetails::Async,
     }));
 
     assert_eq!(results, exp);
