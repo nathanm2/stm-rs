@@ -64,6 +64,7 @@ pub struct StpDecoder {
     state: DecoderState,                 // The state of the decoder.
     offset: usize,                       // Offset in nibbles.
     f_count: u8,                         // Number of consecutive 0xF nibbles.
+    start: usize,                        // Current packet starting offset.
     span: usize,                         // Current packet span.
     opcode: Option<stp::OpCode>,         // Current opcode.
     ts_type: Option<stp::TimestampType>, // Timestamp type.
@@ -77,6 +78,7 @@ impl StpDecoder {
             state: Unsynced,
             offset: 0,
             f_count: 0,
+            start: 0,
             span: 0,
             opcode: None,
             ts_type: None,
@@ -136,64 +138,70 @@ impl StpDecoder {
             }
             self.f_count = 0;
         }
-        self.offset += 1;
     }
 
     fn handle_async(&mut self, handler: &mut dyn FnMut(Result)) {
+        let span = ASYNC_F_COUNT as usize + 1;
+
         // Report truncated packets (if any):
-        self.truncated_packet_check(self.offset - ASYNC_F_COUNT as usize, handler);
+        self.truncated_packet_check(handler);
 
         // Report the async packet:
         handler(Ok(Packet {
             packet: stp::Packet::Async,
-            start: self.offset - ASYNC_F_COUNT as usize,
-            span: ASYNC_F_COUNT as usize + 1,
+            start: self.offset,
+            span,
         }));
 
-        // Transition to the 'OpCode' state
-        self.set_state(OpCode);
+        self.offset += span;
 
         // Per the spec, an ASYNC must be followed by a VERSION packet, we can use ts_type to tell
         // if this has been violated.
         self.ts_type = None;
         self.is_le = false;
+
+        // Transition to the 'OpCode' state
+        self.set_state(OpCode);
     }
 
     fn handle_invalid_async(&mut self, bad_nibble: u8, handler: &mut dyn FnMut(Result)) {
+        let span = ASYNC_F_COUNT as usize + 1;
+
         // Report truncated packets (if any):
-        self.truncated_packet_check(self.offset - ASYNC_F_COUNT as usize, handler);
+        self.truncated_packet_check(handler);
 
         // Report the error:
         handler(Err(Error {
             reason: InvalidAsync { bad_nibble },
-            start: self.offset - ASYNC_F_COUNT as usize,
-            span: ASYNC_F_COUNT as usize + 1,
+            start: self.offset,
+            span,
         }));
+
+        self.offset += span;
 
         // Transition to the 'Unsynced' state
         self.set_state(Unsynced);
     }
 
-    fn truncated_packet_check(&mut self, offset: usize, handler: &mut dyn FnMut(Result)) {
+    fn truncated_packet_check(&mut self, handler: &mut dyn FnMut(Result)) {
         if let Unsynced = self.state {
             return;
         } else if self.span == 0 {
             return;
         }
 
-        handler(Err(Error {
-            reason: TruncatedPacket {
+        self.report_error(
+            TruncatedPacket {
                 opcode: self.opcode,
             },
-            start: offset - self.span,
-            span: self.span,
-        }));
+            handler,
+        );
     }
 
     fn report_error(&mut self, reason: ErrorReason, handler: &mut dyn FnMut(Result)) {
         handler(Err(Error {
             reason,
-            start: self.offset - self.span,
+            start: self.start,
             span: self.span,
         }));
     }
@@ -201,7 +209,7 @@ impl StpDecoder {
     fn report_packet(&mut self, packet: stp::Packet, handler: &mut dyn FnMut(Result)) {
         handler(Ok(Packet {
             packet,
-            start: self.offset - self.span,
+            start: self.start,
             span: self.span,
         }));
     }
@@ -222,29 +230,33 @@ impl StpDecoder {
             Version(_) => self.decode_version(nibble, handler),
             Data(_) => self.decode_data(nibble, handler),
         }
+        self.offset += 1;
     }
 
     fn decode_opcode(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         match self.span {
-            1 => match nibble {
-                0x0 => self.span = 0, // NULL packet.
-                0x1 => self.set_data_state(M8, 2, false, handler),
-                0x2 => self.set_data_state(MERR, 2, false, handler),
-                0x3 => self.set_data_state(C8, 2, false, handler),
-                0x4 => self.set_data_state(D8, 2, false, handler),
-                0x5 => self.set_data_state(D16, 4, false, handler),
-                0x6 => self.set_data_state(D32, 8, false, handler),
-                0x7 => self.set_data_state(D64, 16, false, handler),
-                0x8 => self.set_data_state(D8MTS, 2, true, handler),
-                0x9 => self.set_data_state(D16MTS, 4, true, handler),
-                0xA => self.set_data_state(D32MTS, 8, true, handler),
-                0xB => self.set_data_state(D64MTS, 8, true, handler),
-                0xC => self.set_data_state(D4, 1, false, handler),
-                0xD => self.set_data_state(D4MTS, 1, true, handler),
-                0xE => self.set_data_state(FLAG_TS, 0, true, handler),
-                0xF => {}
-                _ => panic!("Not a nibble: {}", nibble),
-            },
+            1 => {
+                self.start = self.offset;
+                match nibble {
+                    0x0 => self.span = 0, // NULL packet.
+                    0x1 => self.set_data_state(M8, 2, false, handler),
+                    0x2 => self.set_data_state(MERR, 2, false, handler),
+                    0x3 => self.set_data_state(C8, 2, false, handler),
+                    0x4 => self.set_data_state(D8, 2, false, handler),
+                    0x5 => self.set_data_state(D16, 4, false, handler),
+                    0x6 => self.set_data_state(D32, 8, false, handler),
+                    0x7 => self.set_data_state(D64, 16, false, handler),
+                    0x8 => self.set_data_state(D8MTS, 2, true, handler),
+                    0x9 => self.set_data_state(D16MTS, 4, true, handler),
+                    0xA => self.set_data_state(D32MTS, 8, true, handler),
+                    0xB => self.set_data_state(D64MTS, 8, true, handler),
+                    0xC => self.set_data_state(D4, 1, false, handler),
+                    0xD => self.set_data_state(D4MTS, 1, true, handler),
+                    0xE => self.set_data_state(FLAG_TS, 0, true, handler),
+                    0xF => {}
+                    _ => panic!("Not a nibble: {}", nibble),
+                }
+            }
             2 => match nibble {
                 0x0 => {}
                 0x1 => self.set_data_state(M16, 4, false, handler),
