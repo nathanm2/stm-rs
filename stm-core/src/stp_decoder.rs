@@ -30,22 +30,30 @@ pub struct Packet {
 pub type Result = result::Result<Packet, Error>;
 
 struct DataFragment {
+    data_sz_span: usize,
     data_sz: u8,
-    has_timestamp: bool,
+    data_span: usize,
     data: u64,
+    has_timestamp: bool,
+    timestamp_sz_span: usize,
     timestamp_sz: u8,
+    timestamp_span: usize,
     timestamp: u64,
 }
 
 impl DataFragment {
-    pub fn new(data_sz: u8, has_timestamp: bool) -> Self {
-        return DataFragment {
+    pub fn new(span: usize, data_sz: u8, has_timestamp: bool) -> Self {
+        DataFragment {
+            data_sz_span: 0,
             data_sz,
-            has_timestamp,
+            data_span: span + data_sz as usize,
             data: 0,
+            has_timestamp,
+            timestamp_sz_span: 0,
             timestamp_sz: 0,
+            timestamp_span: 0,
             timestamp: 0,
-        };
+        }
     }
 }
 
@@ -294,7 +302,7 @@ impl StpDecoder {
     ) {
         if self.valid_ts_type(handler) {
             self.opcode = Some(opcode);
-            self.set_state(Data(DataFragment::new(data_sz, has_timestamp)));
+            self.set_state(Data(DataFragment::new(self.span, data_sz, has_timestamp)));
         }
     }
 
@@ -348,7 +356,7 @@ impl StpDecoder {
             5 => self.state = Version(nibble),
             6 => {
                 if let Version(prior_nibble) = self.state {
-                    let payload = prior_nibble << 4 & nibble;
+                    let payload = prior_nibble << 4 | nibble;
                     self.is_le = if payload & 0x80 == 0x80 { true } else { false };
                     if payload & 0x7F == 0x01 {
                         self.report_packet(
@@ -375,5 +383,27 @@ impl StpDecoder {
         }
     }
 
-    fn decode_data(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {}
+    fn finish_data(&mut self, handler: &mut dyn FnMut(Result)) {}
+
+    fn decode_data(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+        if let Data(tmp) = &mut self.state {
+            match self.span {
+                s if s < tmp.data_span => tmp.data = tmp.data << 4 | nibble as u64,
+                s if s < tmp.timestamp_span => tmp.timestamp = tmp.timestamp << 4 | nibble as u64,
+                s if s == tmp.data_span => {
+                    if tmp.has_timestamp {
+                        if self.ts_type == Some(STPv1LEGACY) {
+                            tmp.timestamp_sz = 2;
+                            tmp.timestamp_span = self.span + 2;
+                        } else {
+                            tmp.timestamp_sz_span = self.span + 1;
+                        }
+                    } else {
+                        self.finish_data(handler);
+                    }
+                }
+                s => panic!("Unexpected decode data nibble: {}", s),
+            }
+        }
+    }
 }
