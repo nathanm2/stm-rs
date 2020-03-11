@@ -1,3 +1,4 @@
+use crate::nibble::swap_nibbles;
 use crate::stp::{self, OpCode::*, StpVersion::*, TimestampType::*};
 use std::result;
 
@@ -383,7 +384,53 @@ impl StpDecoder {
         }
     }
 
-    fn finish_data(&mut self, handler: &mut dyn FnMut(Result)) {}
+    fn finish_data(&mut self, handler: &mut dyn FnMut(Result)) {
+        if let Data(tmp) = &mut self.state {
+            let data = if tmp.data_sz > 1 {
+                swap_nibbles(tmp.data, tmp.data_sz as usize)
+            } else {
+                tmp.data
+            };
+            let timestamp = if tmp.timestamp_sz > 1 {
+                swap_nibbles(tmp.timestamp, tmp.timestamp_sz as usize)
+            } else {
+                tmp.timestamp
+            };
+            let packet = match self.opcode {
+                Some(M8) | Some(M16) => stp::Packet::Master {
+                    opcode: self.opcode.unwrap(),
+                    master: data as u16,
+                },
+                Some(MERR) | Some(GERR) => stp::Packet::Error {
+                    opcode: self.opcode.unwrap(),
+                    data: data as u8,
+                },
+                Some(C8) | Some(C16) => stp::Packet::Channel {
+                    opcode: self.opcode.unwrap(),
+                    channel: data as u16,
+                },
+                Some(D4) | Some(D4M) | Some(D8) | Some(D8M) | Some(D16) | Some(D16M)
+                | Some(D32) | Some(D32M) | Some(D64) | Some(D64M) => stp::Packet::Data {
+                    opcode: self.opcode.unwrap(),
+                    data,
+                    timestamp: None,
+                },
+                Some(D4TS) | Some(D4MTS) | Some(D8TS) | Some(D8MTS) | Some(D16TS)
+                | Some(D16MTS) | Some(D32TS) | Some(D32MTS) | Some(D64TS) | Some(D64MTS) => {
+                    stp::Packet::Data {
+                        opcode: self.opcode.unwrap(),
+                        data,
+                        timestamp: Some(timestamp),
+                    }
+                }
+
+                Some(v) => panic!("Unexpected data opcode: {:?}", v),
+                None => panic!("Unexpected data opcode: None"),
+            };
+            self.report_packet(packet, handler);
+            self.set_state(OpCode);
+        }
+    }
 
     fn decode_data(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         if let Data(tmp) = &mut self.state {
@@ -401,6 +448,11 @@ impl StpDecoder {
                     } else {
                         self.finish_data(handler);
                     }
+                }
+                s if s == tmp.timestamp_span => self.finish_data(handler),
+                s if s == tmp.timestamp_sz_span => {
+                    tmp.timestamp_sz = nibble;
+                    tmp.timestamp_span = self.span + nibble as usize;
                 }
                 s => panic!("Unexpected decode data nibble: {}", s),
             }
