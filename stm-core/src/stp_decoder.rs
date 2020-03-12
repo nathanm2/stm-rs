@@ -427,12 +427,10 @@ impl StpDecoder {
                 },
                 Some(D4TS) | Some(D4MTS) | Some(D8TS) | Some(D8MTS) | Some(D16TS)
                 | Some(D16MTS) | Some(D32TS) | Some(D32MTS) | Some(D64TS) | Some(D64MTS) => {
-                    let ts = tmp.timestamp;
-                    let ts_sz = tmp.timestamp_sz;
                     stp::Packet::Data {
                         opcode: self.opcode.unwrap(),
                         data,
-                        timestamp: Some(self.finish_timestamp(ts, ts_sz)),
+                        timestamp: Some(self.finish_timestamp(tmp.timestamp, tmp.timestamp_sz)),
                     }
                 }
                 Some(v) => panic!("Unexpected data opcode: {:?}", v),
