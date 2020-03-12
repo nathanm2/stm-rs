@@ -1,4 +1,4 @@
-use stm_core::stp;
+use stm_core::stp::{self, StpVersion, TimestampType};
 use stm_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
 
 // Unsynced:
@@ -158,6 +158,40 @@ fn invalid_opcode() {
         packet: stp::Packet::Async,
         start: 24,
         span: 22,
+    }));
+
+    assert_eq!(results, exp);
+}
+
+// STPv2.2, NATDELTA, BE
+const VERSION_NIBBLES: [u8; 6] = [0xf, 0x0, 0x0, 0xA, 0x0, 0x01];
+
+#[test]
+fn version_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| results.push(r));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Async,
+        start: 0,
+        span: 22,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Version {
+            version: StpVersion::STPv2_2,
+            ts_type: TimestampType::STPv2NATDELTA,
+            is_le: false,
+        },
+        start: 22,
+        span: 6,
     }));
 
     assert_eq!(results, exp);

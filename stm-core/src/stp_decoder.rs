@@ -384,17 +384,27 @@ impl StpDecoder {
         }
     }
 
+    fn finish_timestamp(&mut self, ts: u64, length: u8) -> stp::Timestamp {
+        let value = if length > 1 {
+            swap_nibbles(ts, length as usize)
+        } else {
+            ts
+        };
+        match self.ts_type {
+            Some(STPv1LEGACY) => stp::Timestamp::STPv1 { value: value as u8 },
+            Some(STPv2NATDELTA) => stp::Timestamp::STPv2NATDELTA { length, value },
+            Some(STPv2NAT) => stp::Timestamp::STPv2NAT { length, value },
+            Some(STPv2GRAY) => stp::Timestamp::STPv2GRAY { length, value },
+            None => panic!("Expected timestamp type"),
+        }
+    }
+
     fn finish_data(&mut self, handler: &mut dyn FnMut(Result)) {
-        if let Data(tmp) = &mut self.state {
+        if let Data(ref tmp) = self.state {
             let data = if tmp.data_sz > 1 {
                 swap_nibbles(tmp.data, tmp.data_sz as usize)
             } else {
                 tmp.data
-            };
-            let timestamp = if tmp.timestamp_sz > 1 {
-                swap_nibbles(tmp.timestamp, tmp.timestamp_sz as usize)
-            } else {
-                tmp.timestamp
             };
             let packet = match self.opcode {
                 Some(M8) | Some(M16) => stp::Packet::Master {
@@ -417,13 +427,14 @@ impl StpDecoder {
                 },
                 Some(D4TS) | Some(D4MTS) | Some(D8TS) | Some(D8MTS) | Some(D16TS)
                 | Some(D16MTS) | Some(D32TS) | Some(D32MTS) | Some(D64TS) | Some(D64MTS) => {
+                    let ts = tmp.timestamp;
+                    let ts_sz = tmp.timestamp_sz;
                     stp::Packet::Data {
                         opcode: self.opcode.unwrap(),
                         data,
-                        timestamp: Some(timestamp),
+                        timestamp: Some(self.finish_timestamp(ts, ts_sz)),
                     }
                 }
-
                 Some(v) => panic!("Unexpected data opcode: {:?}", v),
                 None => panic!("Unexpected data opcode: None"),
             };
@@ -433,7 +444,7 @@ impl StpDecoder {
     }
 
     fn decode_data(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
-        if let Data(tmp) = &mut self.state {
+        if let Data(ref mut tmp) = self.state {
             match self.span {
                 s if s < tmp.data_span => tmp.data = tmp.data << 4 | nibble as u64,
                 s if s < tmp.timestamp_span => tmp.timestamp = tmp.timestamp << 4 | nibble as u64,

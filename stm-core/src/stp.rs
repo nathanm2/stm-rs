@@ -63,7 +63,7 @@ pub enum Timestamp {
 pub enum Packet {
     Async,
     Null {
-        timestamp: Option<u64>,
+        timestamp: Option<Timestamp>,
     },
     Version {
         version: StpVersion,
@@ -81,12 +81,12 @@ pub enum Packet {
     Data {
         opcode: OpCode,
         data: u64,
-        timestamp: Option<u64>,
+        timestamp: Option<Timestamp>,
     },
     Frequency {
         opcode: OpCode,
         frequency: u64,
-        timestamp: Option<u64>,
+        timestamp: Option<Timestamp>,
     },
     Error {
         opcode: OpCode,
