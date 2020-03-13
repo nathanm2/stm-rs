@@ -9,6 +9,7 @@ pub enum ErrorReason {
     MissingVersion,
     InvalidOpCode { value: u16 },
     InvalidTimestampType { value: u8 },
+    InvalidTimestampSize { value: u8 },
     InvalidVersion { value: u8 },
 }
 
@@ -30,6 +31,7 @@ pub struct Packet {
 
 pub type Result = result::Result<Packet, Error>;
 
+#[allow(dead_code)]
 struct DataFragment {
     data_sz_span: usize,
     data_sz: u8,
@@ -427,10 +429,12 @@ impl StpDecoder {
                 },
                 Some(D4TS) | Some(D4MTS) | Some(D8TS) | Some(D8MTS) | Some(D16TS)
                 | Some(D16MTS) | Some(D32TS) | Some(D32MTS) | Some(D64TS) | Some(D64MTS) => {
+                    let ts = tmp.timestamp;
+                    let ts_sz = tmp.timestamp_sz;
                     stp::Packet::Data {
                         opcode: self.opcode.unwrap(),
                         data,
-                        timestamp: Some(self.finish_timestamp(tmp.timestamp, tmp.timestamp_sz)),
+                        timestamp: Some(self.finish_timestamp(ts, ts_sz)),
                     }
                 }
                 Some(v) => panic!("Unexpected data opcode: {:?}", v),
@@ -438,6 +442,15 @@ impl StpDecoder {
             };
             self.report_packet(packet, handler);
             self.set_state(OpCode);
+        }
+    }
+
+    fn decode_timestamp_sz(nibble: u8) -> Option<u8> {
+        match nibble {
+            v @ 0x0..=0xC => Some(v),
+            0xD => Some(14),
+            0xE => Some(16),
+            _ => None,
         }
     }
 
@@ -459,10 +472,16 @@ impl StpDecoder {
                     }
                 }
                 s if s == tmp.timestamp_span => self.finish_data(handler),
-                s if s == tmp.timestamp_sz_span => {
-                    tmp.timestamp_sz = nibble;
-                    tmp.timestamp_span = self.span + nibble as usize;
-                }
+                s if s == tmp.timestamp_sz_span => match StpDecoder::decode_timestamp_sz(nibble) {
+                    Some(sz) => {
+                        tmp.timestamp_sz = sz;
+                        tmp.timestamp_span = self.span + sz as usize;
+                    }
+                    None => {
+                        self.report_error(InvalidTimestampSize { value: nibble }, handler);
+                        self.set_state(Unsynced);
+                    }
+                },
                 s => panic!("Unexpected decode data nibble: {}", s),
             }
         }

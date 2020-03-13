@@ -164,7 +164,11 @@ fn invalid_opcode() {
 }
 
 // STPv2.2, NATDELTA, BE
-const VERSION_NIBBLES: [u8; 6] = [0xf, 0x0, 0x0, 0xA, 0x0, 0x01];
+const VERSION_NIBBLES: [u8; 6] = [0xf, 0x0, 0x0, 0xA, 0x0, 0x1];
+const VERSION_V1_NIBBLES: [u8; 4] = [0xf, 0x0, 0x0, 0x0];
+const VERSION_V2_1_NIBBLES: [u8; 4] = [0xf, 0x0, 0x0, 0x3];
+const VERSION_LE_NIBBLES: [u8; 6] = [0xf, 0x0, 0x0, 0xC, 0x8, 0x1];
+const VERSION_INVALID_NIBBLES: [u8; 6] = [0xf, 0x0, 0x0, 0xC, 0x8, 0x2];
 
 #[test]
 fn version_test() {
@@ -175,6 +179,10 @@ fn version_test() {
 
     stream.extend_from_slice(&ASYNC_NIBBLES);
     stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&VERSION_V1_NIBBLES);
+    stream.extend_from_slice(&VERSION_V2_1_NIBBLES);
+    stream.extend_from_slice(&VERSION_LE_NIBBLES);
+    stream.extend_from_slice(&VERSION_INVALID_NIBBLES);
 
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
@@ -191,6 +199,42 @@ fn version_test() {
             is_le: false,
         },
         start: 22,
+        span: 6,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Version {
+            version: StpVersion::STPv1,
+            ts_type: TimestampType::STPv1LEGACY,
+            is_le: false,
+        },
+        start: 28,
+        span: 4,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Version {
+            version: StpVersion::STPv2_1,
+            ts_type: TimestampType::STPv2NAT,
+            is_le: false,
+        },
+        start: 32,
+        span: 4,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Version {
+            version: StpVersion::STPv2_2,
+            ts_type: TimestampType::STPv2GRAY,
+            is_le: true,
+        },
+        start: 36,
+        span: 6,
+    }));
+
+    exp.push(Err(Error {
+        reason: InvalidVersion { value: 0x2 },
+        start: 42,
         span: 6,
     }));
 
