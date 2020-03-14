@@ -387,7 +387,7 @@ impl StpDecoder {
     }
 
     fn finish_timestamp(&mut self, ts: u64, length: u8) -> stp::Timestamp {
-        let value = if length > 1 {
+        let value = if length > 1 && self.is_le {
             swap_nibbles(ts, length as usize)
         } else {
             ts
@@ -403,7 +403,7 @@ impl StpDecoder {
 
     fn finish_data(&mut self, handler: &mut dyn FnMut(Result)) {
         if let Data(ref tmp) = self.state {
-            let data = if tmp.data_sz > 1 {
+            let data = if tmp.data_sz > 1 && self.is_le {
                 swap_nibbles(tmp.data, tmp.data_sz as usize)
             } else {
                 tmp.data
@@ -460,6 +460,7 @@ impl StpDecoder {
                 s if s < tmp.data_span => tmp.data = tmp.data << 4 | nibble as u64,
                 s if s < tmp.timestamp_span => tmp.timestamp = tmp.timestamp << 4 | nibble as u64,
                 s if s == tmp.data_span => {
+                    tmp.data = tmp.data << 4 | nibble as u64;
                     if tmp.has_timestamp {
                         if self.ts_type == Some(STPv1LEGACY) {
                             tmp.timestamp_sz = 2;
@@ -471,7 +472,10 @@ impl StpDecoder {
                         self.finish_data(handler);
                     }
                 }
-                s if s == tmp.timestamp_span => self.finish_data(handler),
+                s if s == tmp.timestamp_span => {
+                    tmp.timestamp = tmp.timestamp << 4 | nibble as u64;
+                    self.finish_data(handler);
+                }
                 s if s == tmp.timestamp_sz_span => match StpDecoder::decode_timestamp_sz(nibble) {
                     Some(sz) => {
                         tmp.timestamp_sz = sz;

@@ -1,4 +1,4 @@
-use stm_core::stp::{self, StpVersion, TimestampType};
+use stm_core::stp::{self, StpVersion, Timestamp, TimestampType};
 use stm_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
 
 // Unsynced:
@@ -238,5 +238,129 @@ fn version_test() {
         span: 6,
     }));
 
+    assert_eq!(results, exp);
+}
+
+const D4_NIBBLES: [u8; 2] = [0xC, 0x1];
+const D64_NIBBLES: [u8; 17] = [
+    0x7, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0,
+];
+const D4TS_NIBBLES: [u8; 6] = [0xF, 0xC, 0x1, 0x2, 0x1, 0x2];
+
+fn is_data(r: &Result) -> bool {
+    match r {
+        Ok(Packet {
+            packet: stp::Packet::Data { .. },
+            ..
+        }) => true,
+        _ => false,
+    }
+}
+
+#[test]
+fn data_be_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&D4_NIBBLES);
+    stream.extend_from_slice(&D64_NIBBLES);
+    stream.extend_from_slice(&D4TS_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_data(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D4,
+            data: 0x1,
+            timestamp: None,
+        },
+        start: 28,
+        span: 2,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D64,
+            data: 0x1234_5678_9abc_def0,
+            timestamp: None,
+        },
+        start: 30,
+        span: 17,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D4TS,
+            data: 0x1,
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 2,
+                value: 0x12,
+            }),
+        },
+        start: 47,
+        span: 6,
+    }));
+    assert_eq!(results, exp);
+}
+
+#[test]
+fn data_le_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_LE_NIBBLES);
+    stream.extend_from_slice(&D4_NIBBLES);
+    stream.extend_from_slice(&D64_NIBBLES);
+    stream.extend_from_slice(&D4TS_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_data(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D4,
+            data: 0x1,
+            timestamp: None,
+        },
+        start: 28,
+        span: 2,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D64,
+            data: 0x0fed_cba9_8765_4321,
+            timestamp: None,
+        },
+        start: 30,
+        span: 17,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D4TS,
+            data: 0x1,
+            timestamp: Some(Timestamp::STPv2GRAY {
+                length: 2,
+                value: 0x21,
+            }),
+        },
+        start: 47,
+        span: 6,
+    }));
     assert_eq!(results, exp);
 }
