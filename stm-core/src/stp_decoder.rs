@@ -260,7 +260,7 @@ impl StpDecoder {
                     0x8 => self.set_data_state(D8MTS, 2, true, handler),
                     0x9 => self.set_data_state(D16MTS, 4, true, handler),
                     0xA => self.set_data_state(D32MTS, 8, true, handler),
-                    0xB => self.set_data_state(D64MTS, 8, true, handler),
+                    0xB => self.set_data_state(D64MTS, 16, true, handler),
                     0xC => self.set_data_state(D4, 1, false, handler),
                     0xD => self.set_data_state(D4MTS, 1, true, handler),
                     0xE => self.set_data_state(FLAG_TS, 0, true, handler),
@@ -280,7 +280,7 @@ impl StpDecoder {
                 0x8 => self.set_data_state(D8M, 2, false, handler),
                 0x9 => self.set_data_state(D16M, 4, false, handler),
                 0xA => self.set_data_state(D32M, 8, false, handler),
-                0xB => self.set_data_state(D64M, 8, false, handler),
+                0xB => self.set_data_state(D64M, 16, false, handler),
                 0xC => self.set_data_state(D4TS, 1, true, handler),
                 0xD => self.set_data_state(D4M, 1, false, handler),
                 0xE => self.handle_flag_packet(handler),
@@ -325,7 +325,7 @@ impl StpDecoder {
     }
 
     fn handle_flag_packet(&mut self, handler: &mut dyn FnMut(Result)) {
-        self.report_packet(stp::Packet::Flag, handler);
+        self.report_packet(stp::Packet::Flag { timestamp: None }, handler);
         self.set_state(OpCode);
     }
 

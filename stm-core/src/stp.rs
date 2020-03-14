@@ -92,5 +92,7 @@ pub enum Packet {
         opcode: OpCode,
         data: u8,
     },
-    Flag,
+    Flag {
+        timestamp: Option<Timestamp>,
+    },
 }
