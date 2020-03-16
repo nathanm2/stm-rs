@@ -44,22 +44,6 @@ struct DataFragment {
     timestamp: u64,
 }
 
-impl DataFragment {
-    pub fn new(span: usize, data_sz: u8, has_timestamp: bool) -> Self {
-        DataFragment {
-            data_sz_span: 0,
-            data_sz,
-            data_span: span + data_sz as usize,
-            data: 0,
-            has_timestamp,
-            timestamp_sz_span: 0,
-            timestamp_sz: 0,
-            timestamp_span: 0,
-            timestamp: 0,
-        }
-    }
-}
-
 enum DecoderState {
     Unsynced, // The decoder is looking for a SYNC packet.
     OpCode,   // Processing an opcode.
@@ -305,7 +289,30 @@ impl StpDecoder {
     ) {
         if self.valid_ts_type(handler) {
             self.opcode = Some(opcode);
-            self.set_state(Data(DataFragment::new(self.span, data_sz, has_timestamp)));
+
+            let data_span = self.span + data_sz as usize;
+            let mut timestamp_sz = 0;
+            let mut timestamp_span = 0;
+            let mut timestamp_sz_span = 0;
+            if has_timestamp {
+                if self.ts_type == Some(STPv1LEGACY) {
+                    timestamp_sz = 2;
+                    timestamp_span = data_span + 2;
+                } else {
+                    timestamp_sz_span = data_span + 1;
+                }
+            }
+            self.set_state(Data(DataFragment {
+                data_sz_span: 0,
+                data_sz,
+                data_span,
+                data: 0,
+                has_timestamp,
+                timestamp_sz_span,
+                timestamp_sz,
+                timestamp_span,
+                timestamp: 0,
+            }));
         }
     }
 
@@ -437,6 +444,13 @@ impl StpDecoder {
                         timestamp: Some(self.finish_timestamp(ts, ts_sz)),
                     }
                 }
+                Some(FLAG_TS) => {
+                    let ts = tmp.timestamp;
+                    let ts_sz = tmp.timestamp_sz;
+                    stp::Packet::Flag {
+                        timestamp: Some(self.finish_timestamp(ts, ts_sz)),
+                    }
+                }
                 Some(v) => panic!("Unexpected data opcode: {:?}", v),
                 None => panic!("Unexpected data opcode: None"),
             };
@@ -461,14 +475,7 @@ impl StpDecoder {
                 s if s < tmp.timestamp_span => tmp.timestamp = tmp.timestamp << 4 | nibble as u64,
                 s if s == tmp.data_span => {
                     tmp.data = tmp.data << 4 | nibble as u64;
-                    if tmp.has_timestamp {
-                        if self.ts_type == Some(STPv1LEGACY) {
-                            tmp.timestamp_sz = 2;
-                            tmp.timestamp_span = self.span + 2;
-                        } else {
-                            tmp.timestamp_sz_span = self.span + 1;
-                        }
-                    } else {
+                    if tmp.has_timestamp == false {
                         self.finish_data(handler);
                     }
                 }
