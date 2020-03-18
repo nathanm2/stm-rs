@@ -139,6 +139,14 @@ fn invalid_opcode() {
     stream.push(0xF);
     stream.push(0xF); // <= Invalid op-code
     stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.push(0xF);
+    stream.push(0x0);
+    stream.push(0xC); // <= Invalid op-code
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.push(0xF);
+    stream.push(0x0);
+    stream.push(0xF);
+    stream.push(0x3);
 
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
@@ -158,6 +166,24 @@ fn invalid_opcode() {
         packet: stp::Packet::Async,
         start: 24,
         span: 22,
+    }));
+
+    exp.push(Err(Error {
+        reason: InvalidOpCode { value: 0xF0C },
+        start: 46,
+        span: 3,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Async,
+        start: 49,
+        span: 22,
+    }));
+
+    exp.push(Err(Error {
+        reason: InvalidOpCode { value: 0xF0F3 },
+        start: 71,
+        span: 4,
     }));
 
     assert_eq!(results, exp);
@@ -858,6 +884,7 @@ fn is_flag(r: &Result) -> bool {
         _ => false,
     }
 }
+
 #[test]
 fn flag_test() {
     let mut results = Vec::<Result>::new();
@@ -891,6 +918,90 @@ fn flag_test() {
         },
         start: 30,
         span: 4,
+    }));
+
+    assert_eq!(results, exp);
+}
+
+const D4MTS_ZERO_TS_NIBBLES: [u8; 3] = [0xD, 0x1, 0x0];
+
+#[test]
+fn zero_ts_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&D4MTS_ZERO_TS_NIBBLES);
+    stream.extend_from_slice(&D4MTS_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_data(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D4MTS,
+            data: 0x1,
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 0,
+                value: 0,
+            }),
+        },
+        start: 28,
+        span: 3,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Data {
+            opcode: stp::OpCode::D4MTS,
+            data: 0x1,
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 1,
+                value: 1,
+            }),
+        },
+        start: 31,
+        span: 4,
+    }));
+
+    assert_eq!(results, exp);
+}
+
+fn is_decode_error(r: &Result) -> bool {
+    match r {
+        Err(_) => true,
+        _ => false,
+    }
+}
+
+const D4MTS_INVALID_TS_NIBBLES: [u8; 4] = [0xD, 0x1, 0xF, 0x0];
+
+#[test]
+fn invalid_ts_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&D4MTS_INVALID_TS_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_decode_error(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Err(Error {
+        reason: InvalidTimestampSize,
+        start: 28,
+        span: 3,
     }));
 
     assert_eq!(results, exp);

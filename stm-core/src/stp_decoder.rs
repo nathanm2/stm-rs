@@ -9,7 +9,7 @@ pub enum ErrorReason {
     MissingVersion,
     InvalidOpCode { value: u16 },
     InvalidTimestampType { value: u8 },
-    InvalidTimestampSize { value: u8 },
+    InvalidTimestampSize,
     InvalidVersion { value: u8 },
 }
 
@@ -273,8 +273,16 @@ impl StpDecoder {
             },
             3 => match nibble {
                 0x0 => self.set_state(Version(0)),
+                0x8 => self.set_data_state(FREQ, 8, false, handler),
+                0x9 => self.set_data_state(FREQ_TS, 8, true, handler),
+                0xF => {}
                 // TODO: Support remaining opcodes!
-                _ => self.handle_invalid_opcode(0xF00 & nibble as u16, handler),
+                _ => self.handle_invalid_opcode(0xF00 | (nibble as u16), handler),
+            },
+            4 => match nibble {
+                0x0 => self.set_data_state(FREQ_40, 10, false, handler),
+                0x1 => self.set_data_state(FREQ_40_TS, 10, true, handler),
+                _ => self.handle_invalid_opcode(0xF0F0 | (nibble as u16), handler),
             },
             _ => panic!("Unexpected span: {}", self.span),
         }
@@ -451,6 +459,20 @@ impl StpDecoder {
                         timestamp: Some(self.finish_timestamp(ts, ts_sz)),
                     }
                 }
+                Some(FREQ) | Some(FREQ_40) => stp::Packet::Frequency {
+                    opcode: self.opcode.unwrap(),
+                    frequency: data,
+                    timestamp: None,
+                },
+                Some(FREQ_TS) | Some(FREQ_40_TS) => {
+                    let ts = tmp.timestamp;
+                    let ts_sz = tmp.timestamp_sz;
+                    stp::Packet::Frequency {
+                        opcode: self.opcode.unwrap(),
+                        frequency: data,
+                        timestamp: Some(self.finish_timestamp(ts, ts_sz)),
+                    }
+                }
                 Some(v) => panic!("Unexpected data opcode: {:?}", v),
                 None => panic!("Unexpected data opcode: None"),
             };
@@ -485,11 +507,15 @@ impl StpDecoder {
                 }
                 s if s == tmp.timestamp_sz_span => match StpDecoder::decode_timestamp_sz(nibble) {
                     Some(sz) => {
-                        tmp.timestamp_sz = sz;
-                        tmp.timestamp_span = self.span + sz as usize;
+                        if sz == 0 {
+                            self.finish_data(handler);
+                        } else {
+                            tmp.timestamp_sz = sz;
+                            tmp.timestamp_span = self.span + sz as usize;
+                        }
                     }
                     None => {
-                        self.report_error(InvalidTimestampSize { value: nibble }, handler);
+                        self.report_error(InvalidTimestampSize, handler);
                         self.set_state(Unsynced);
                     }
                 },

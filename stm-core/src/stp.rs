@@ -39,6 +39,10 @@ pub enum OpCode {
     D4M = 0xFD,
     FLAG = 0xFE,
     VERSION = 0xF00,
+    FREQ = 0xF08,
+    FREQ_TS = 0xF09,
+    FREQ_40 = 0xF0F0,
+    FREQ_40_TS = 0xF0F1,
 }
 
 #[allow(non_camel_case_types)]
