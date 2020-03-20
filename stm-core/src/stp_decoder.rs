@@ -3,6 +3,13 @@ use crate::stp::{self, OpCode::*, StpVersion::*, TimestampType::*};
 use std::result;
 
 #[derive(Debug, PartialEq)]
+pub struct Packet {
+    pub packet: stp::Packet, // Packet type.
+    pub start: usize,        // Packet's starting nibble offset.
+    pub span: usize,         // Pacekt's size in nibbles.
+}
+
+#[derive(Debug, PartialEq)]
 pub enum ErrorReason {
     InvalidAsync { bad_nibble: u8 },
     TruncatedPacket { opcode: Option<stp::OpCode> },
@@ -22,14 +29,31 @@ pub struct Error {
     pub span: usize,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Packet {
-    pub packet: stp::Packet, // Packet type.
-    pub start: usize,        // Packet's starting nibble offset.
-    pub span: usize,         // Pacekt's size in nibbles.
+pub type Result = result::Result<Packet, Error>;
+
+struct TimestampDecoder {
+    ts: u64,
+    ts_span: usize,
+    ts_sz: u8,
+    is_le: bool,
 }
 
-pub type Result = result::Result<Packet, Error>;
+type TSD_Result = result::Result<stp::Timestamp, ErrorReason>;
+
+impl TimestampDecoder {
+    fn new(ts_type: stp::TimestampType, is_le: bool) -> TimestampDecoder {
+        TimestampDecoder {
+            ts: 0,
+            ts_span: 0,
+            ts_sz: if ts_type == STPv1LEGACY { 2 } else { 0 },
+            is_le,
+        }
+    }
+
+    fn decode_nibble(nibble: u8, span: usize) -> Option<TSD_Result> {
+        None
+    }
+}
 
 #[allow(dead_code)]
 struct DataFragment {
