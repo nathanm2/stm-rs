@@ -1,0 +1,8 @@
+[package]
+name = "stp-cli"
+version = "0.1.0"
+authors = ["Nathan Miller <nathanm2@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+stp-core = { path = "../stp-core" }

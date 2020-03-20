@@ -1,6 +1,6 @@
 [workspace]
 
 members = [
-	"stm-core",
-	"stm-cli",
+	"stp-core",
+	"stp-cli",
 ]

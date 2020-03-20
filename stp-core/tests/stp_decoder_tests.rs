@@ -1,5 +1,5 @@
-use stm_core::stp::{self, StpVersion, Timestamp, TimestampType};
-use stm_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
+use stp_core::stp::{self, StpVersion, Timestamp, TimestampType};
+use stp_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
 
 // Unsynced:
 #[test]
@@ -81,6 +81,12 @@ fn truncated_by_async() {
         span: 22,
     }));
 
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null { timestamp: None },
+        start: 23,
+        span: 1,
+    }));
+
     exp.push(Err(Error {
         reason: TruncatedPacket { opcode: None },
         start: 24,
@@ -146,7 +152,7 @@ fn invalid_opcode() {
     stream.push(0xF);
     stream.push(0x0);
     stream.push(0xF);
-    stream.push(0x3);
+    stream.push(0x3); // <= Invalid op-code
 
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
@@ -1002,6 +1008,120 @@ fn invalid_ts_test() {
         reason: InvalidTimestampSize,
         start: 28,
         span: 3,
+    }));
+
+    assert_eq!(results, exp);
+}
+
+fn is_null(r: &Result) -> bool {
+    match r {
+        Ok(Packet {
+            packet: stp::Packet::Null { .. },
+            ..
+        }) => true,
+        _ => false,
+    }
+}
+
+const NULL_TS: [u8; 5] = [0xF, 0x0, 0x1, 0x1, 0x2];
+
+#[test]
+fn null_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&NULL_TS);
+    stream.push(0);
+    stream.push(0);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_null(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null {
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 1,
+                value: 0x2,
+            }),
+        },
+        start: 28,
+        span: 5,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null { timestamp: None },
+        start: 33,
+        span: 1,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null { timestamp: None },
+        start: 34,
+        span: 1,
+    }));
+
+    assert_eq!(results, exp);
+}
+
+fn is_user(r: &Result) -> bool {
+    match r {
+        Ok(Packet {
+            packet: stp::Packet::User { .. },
+            ..
+        }) => true,
+        _ => false,
+    }
+}
+
+const USER_NIBBLES: [u8; 8] = [0xf, 0x0, 0x2, 0x3, 0x1, 0x2, 0x3, 0x4];
+const USER_TS_NIBBLES: [u8; 7] = [0xf, 0x0, 0x3, 0x0, 0x1, 0x1, 0x1];
+
+#[test]
+fn user_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&USER_NIBBLES);
+    stream.extend_from_slice(&USER_TS_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_user(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::User {
+            length: 4,
+            payload: 0x1234,
+            timestamp: None,
+        },
+        start: 28,
+        span: 8,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::User {
+            length: 1,
+            payload: 0x1,
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 1,
+                value: 0x1,
+            }),
+        },
+        start: 36,
+        span: 7,
     }));
 
     assert_eq!(results, exp);
