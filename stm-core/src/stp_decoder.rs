@@ -31,26 +31,77 @@ pub struct Error {
 
 pub type Result = result::Result<Packet, Error>;
 
+type TsdResult = result::Result<stp::Timestamp, ErrorReason>;
+
 struct TimestampDecoder {
     ts: u64,
     ts_span: usize,
     ts_sz: u8,
+    ts_type: stp::TimestampType,
     is_le: bool,
 }
-
-type TSD_Result = result::Result<stp::Timestamp, ErrorReason>;
 
 impl TimestampDecoder {
     fn new(ts_type: stp::TimestampType, is_le: bool) -> TimestampDecoder {
         TimestampDecoder {
             ts: 0,
             ts_span: 0,
-            ts_sz: if ts_type == STPv1LEGACY { 2 } else { 0 },
+            ts_sz: 0,
+            ts_type,
             is_le,
         }
     }
 
-    fn decode_nibble(nibble: u8, span: usize) -> Option<TSD_Result> {
+    fn finish_timestamp(&self) -> stp::Timestamp {
+        let value = if self.ts_sz > 1 && self.is_le {
+            swap_nibbles(self.ts, self.ts_sz as usize)
+        } else {
+            self.ts
+        };
+        match self.ts_type {
+            STPv1LEGACY => stp::Timestamp::STPv1 { value: value as u8 },
+            STPv2NATDELTA => stp::Timestamp::STPv2NATDELTA {
+                length: self.ts_sz,
+                value,
+            },
+            STPv2NAT => stp::Timestamp::STPv2NAT {
+                length: self.ts_sz,
+                value,
+            },
+            STPv2GRAY => stp::Timestamp::STPv2GRAY {
+                length: self.ts_sz,
+                value,
+            },
+        }
+    }
+
+    fn decode_nibble(&mut self, nibble: u8, span: usize) -> Option<TsdResult> {
+        if span <= self.ts_span {
+            self.ts = self.ts << 4 | nibble as u64;
+            if span == self.ts_span {
+                return Some(Ok(self.finish_timestamp()));
+            }
+        } else if self.ts_span == 0 {
+            if self.ts_type == STPv1LEGACY {
+                self.ts_sz = 2;
+                self.ts_span = span + 1;
+                self.ts = self.ts << 4 | nibble as u64;
+            } else {
+                // To insure this branch is only called once and panics thereafter...
+                self.ts_span = span;
+
+                self.ts_sz = match nibble {
+                    0 => return Some(Ok(self.finish_timestamp())),
+                    v @ 0x1..=0xC => v,
+                    0xD => 14,
+                    0xE => 16,
+                    _ => return Some(Err(InvalidTimestampSize)),
+                };
+                self.ts_span = span + self.ts_sz as usize;
+            }
+        } else {
+            panic!("Unexpected timestamp nibble");
+        }
         None
     }
 }
