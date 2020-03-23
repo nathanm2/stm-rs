@@ -31,81 +31,6 @@ pub struct Error {
 
 pub type Result = result::Result<Packet, Error>;
 
-type TsdResult = result::Result<stp::Timestamp, ErrorReason>;
-
-struct TimestampDecoder {
-    ts: u64,
-    ts_span: usize,
-    ts_sz: u8,
-    ts_type: stp::TimestampType,
-    is_le: bool,
-}
-
-impl TimestampDecoder {
-    fn new(ts_type: stp::TimestampType, is_le: bool) -> TimestampDecoder {
-        TimestampDecoder {
-            ts: 0,
-            ts_span: 0,
-            ts_sz: 0,
-            ts_type,
-            is_le,
-        }
-    }
-
-    fn finish_timestamp(&self) -> stp::Timestamp {
-        let value = if self.ts_sz > 1 && self.is_le {
-            swap_nibbles(self.ts, self.ts_sz as usize)
-        } else {
-            self.ts
-        };
-        match self.ts_type {
-            STPv1LEGACY => stp::Timestamp::STPv1 { value: value as u8 },
-            STPv2NATDELTA => stp::Timestamp::STPv2NATDELTA {
-                length: self.ts_sz,
-                value,
-            },
-            STPv2NAT => stp::Timestamp::STPv2NAT {
-                length: self.ts_sz,
-                value,
-            },
-            STPv2GRAY => stp::Timestamp::STPv2GRAY {
-                length: self.ts_sz,
-                value,
-            },
-        }
-    }
-
-    fn decode_nibble(&mut self, nibble: u8, span: usize) -> Option<TsdResult> {
-        if span <= self.ts_span {
-            self.ts = self.ts << 4 | nibble as u64;
-            if span == self.ts_span {
-                return Some(Ok(self.finish_timestamp()));
-            }
-        } else if self.ts_span == 0 {
-            if self.ts_type == STPv1LEGACY {
-                self.ts_sz = 2;
-                self.ts_span = span + 1;
-                self.ts = self.ts << 4 | nibble as u64;
-            } else {
-                // To insure this branch is only called once and panics thereafter...
-                self.ts_span = span;
-
-                self.ts_sz = match nibble {
-                    0 => return Some(Ok(self.finish_timestamp())),
-                    v @ 0x1..=0xC => v,
-                    0xD => 14,
-                    0xE => 16,
-                    _ => return Some(Err(InvalidTimestampSize)),
-                };
-                self.ts_span = span + self.ts_sz as usize;
-            }
-        } else {
-            panic!("Unexpected timestamp nibble");
-        }
-        None
-    }
-}
-
 #[allow(dead_code)]
 struct DataFragment {
     data_sz_span: usize,
@@ -240,7 +165,7 @@ impl StpDecoder {
         // Report truncated packets (if any):
         self.truncated_packet_check(handler);
 
-        // Report the error:
+        // Report the invalid ASYNC packet:
         handler(Err(Error {
             reason: InvalidAsync { bad_nibble },
             start: self.offset,
@@ -254,6 +179,7 @@ impl StpDecoder {
     }
 
     fn truncated_packet_check(&mut self, handler: &mut dyn FnMut(Result)) {
+        // If we're not synced OR we're between packets, then we're OK:
         if let Unsynced = self.state {
             return;
         } else if self.span == 0 {
@@ -596,6 +522,176 @@ impl StpDecoder {
                 },
                 s => panic!("Unexpected decode data nibble: {}", s),
             }
+        }
+    }
+}
+
+type TimestampResult = result::Result<stp::Timestamp, ErrorReason>;
+
+struct TimestampDecoder {
+    ts: u64,
+    ts_span: usize,
+    ts_sz: u8,
+    ts_type: stp::TimestampType,
+    is_le: bool,
+}
+
+impl TimestampDecoder {
+    fn new(ts_type: stp::TimestampType, is_le: bool) -> TimestampDecoder {
+        TimestampDecoder {
+            ts: 0,
+            ts_span: 0,
+            ts_sz: 0,
+            ts_type,
+            is_le,
+        }
+    }
+
+    fn decode(&mut self, nibble: u8, span: usize) -> Option<TimestampResult> {
+        if span <= self.ts_span {
+            self.ts = self.ts << 4 | nibble as u64;
+            if span == self.ts_span {
+                return Some(Ok(self.finish_timestamp()));
+            }
+        } else if self.ts_span == 0 {
+            if self.ts_type == STPv1LEGACY {
+                self.ts_sz = 2;
+                self.ts_span = span + 1;
+                self.ts = self.ts << 4 | nibble as u64;
+            } else {
+                // To insure this branch is only called once and panics thereafter...
+                self.ts_span = span;
+
+                self.ts_sz = match nibble {
+                    0 => return Some(Ok(self.finish_timestamp())),
+                    v @ 0x1..=0xC => v,
+                    0xD => 14,
+                    0xE => 16,
+                    _ => return Some(Err(InvalidTimestampSize)),
+                };
+                self.ts_span = span + self.ts_sz as usize;
+            }
+        } else {
+            panic!("Unexpected timestamp nibble");
+        }
+        None
+    }
+
+    fn finish_timestamp(&self) -> stp::Timestamp {
+        let value = if self.ts_sz > 1 && self.is_le {
+            swap_nibbles(self.ts, self.ts_sz as usize)
+        } else {
+            self.ts
+        };
+        match self.ts_type {
+            STPv1LEGACY => stp::Timestamp::STPv1 { value: value as u8 },
+            STPv2NATDELTA => stp::Timestamp::STPv2NATDELTA {
+                length: self.ts_sz,
+                value,
+            },
+            STPv2NAT => stp::Timestamp::STPv2NAT {
+                length: self.ts_sz,
+                value,
+            },
+            STPv2GRAY => stp::Timestamp::STPv2GRAY {
+                length: self.ts_sz,
+                value,
+            },
+        }
+    }
+}
+
+type PacketResult = result::Result<stp::Packet, ErrorReason>;
+
+struct DataDecoder {
+    data: u64,
+    data_sz: usize,
+    data_span: usize,
+    opcode: stp::OpCode,
+    is_le: bool,
+    ts_decoder: Option<TimestampDecoder>,
+}
+
+impl DataDecoder {
+    fn new(opcode: stp::OpCode, is_le: bool, data_sz: usize, span: usize) -> DataDecoder {
+        DataDecoder {
+            data: 0,
+            data_sz,
+            data_span: span + data_sz,
+            opcode,
+            is_le,
+            ts_decoder: None,
+        }
+    }
+
+    fn new_with_timestamp(
+        opcode: stp::OpCode,
+        is_le: bool,
+        data_sz: usize,
+        span: usize,
+        ts_type: stp::TimestampType,
+    ) -> DataDecoder {
+        DataDecoder {
+            data: 0,
+            data_sz,
+            data_span: span + data_sz,
+            opcode,
+            is_le,
+            ts_decoder: Some(TimestampDecoder::new(ts_type, is_le)),
+        }
+    }
+
+    fn decode(&mut self, nibble: u8, span: usize) -> Option<PacketResult> {
+        if span <= self.data_span {
+            self.data = self.data << 4 | nibble as u64;
+            if span == self.data_span && self.ts_decoder.is_none() {
+                Some(Ok(self.finish(None)))
+            } else {
+                None
+            }
+        } else {
+            match self.ts_decoder.as_mut().unwrap().decode(nibble, span) {
+                None => None,
+                Some(Err(error)) => Some(Err(error)),
+                Some(Ok(ts)) => Some(Ok(self.finish(Some(ts)))),
+            }
+        }
+    }
+
+    fn finish(&mut self, timestamp: Option<stp::Timestamp>) -> stp::Packet {
+        let opcode = self.opcode;
+        let data = if self.data_sz > 1 && self.is_le {
+            swap_nibbles(self.data, self.data_sz)
+        } else {
+            self.data
+        };
+
+        match opcode {
+            M8 | M16 => stp::Packet::Master {
+                opcode,
+                master: data as u16,
+            },
+            MERR | GERR => stp::Packet::Error {
+                opcode,
+                data: data as u8,
+            },
+            C8 | C16 => stp::Packet::Channel {
+                opcode,
+                channel: data as u16,
+            },
+            D4 | D4M | D4TS | D4MTS | D8 | D8M | D8TS | D8MTS | D16 | D16M | D16TS | D16MTS
+            | D32 | D32M | D32TS | D32MTS | D64 | D64M | D64TS | D64MTS => stp::Packet::Data {
+                opcode,
+                data,
+                timestamp,
+            },
+            FLAG_TS => stp::Packet::Flag { timestamp },
+            FREQ | FREQ_TS | FREQ_40 | FREQ_40_TS => stp::Packet::Frequency {
+                opcode,
+                frequency: data,
+                timestamp,
+            },
+            _ => panic!("Unexpected data opcode: {:?}", opcode),
         }
     }
 }
