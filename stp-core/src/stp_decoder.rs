@@ -179,7 +179,7 @@ impl StpDecoder {
     }
 
     fn truncated_packet_check(&mut self, handler: &mut dyn FnMut(Result)) {
-        // If we're not synced OR we're between packets, then we're OK:
+        // If we're not synced OR we're between packets, then nothing has been truncated:
         if let Unsynced = self.state {
             return;
         } else if self.span == 0 {
@@ -234,7 +234,7 @@ impl StpDecoder {
             1 => {
                 self.start = self.offset;
                 match nibble {
-                    0x0 => self.span = 0, // NULL packet.
+                    0x0 => self.span = 0, // NULL packet.  Ignore.
                     0x1 => self.set_data_state(M8, 2, false, handler),
                     0x2 => self.set_data_state(MERR, 2, false, handler),
                     0x3 => self.set_data_state(C8, 2, false, handler),
