@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use stm_core::frame_builder::*;
-use stm_core::frame_decoder::{decode_frames, Error, ErrorReason::*};
+use stp_core::frame_builder::*;
+use stp_core::frame_decoder::{decode_frames, Error, ErrorReason::*};
 
 trait DataMap {
     fn save(&mut self, id: Option<u8>, data: u8);

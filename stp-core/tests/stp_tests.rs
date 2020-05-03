@@ -1,4 +1,4 @@
-use stm_core::stp::OpCode;
+use stp_core::stp::OpCode;
 
 #[test]
 fn opcode_name() {

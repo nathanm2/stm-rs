@@ -1,5 +1,5 @@
-use stm_core::stp::{self, StpVersion, Timestamp, TimestampType};
-use stm_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
+use stp_core::stp::{self, StpVersion, Timestamp, TimestampType};
+use stp_core::stp_decoder::{Error, ErrorReason::*, Packet, Result, StpDecoder};
 
 // Unsynced:
 #[test]

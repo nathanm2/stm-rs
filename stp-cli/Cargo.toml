@@ -1,8 +1,8 @@
 [package]
-name = "stm-cli"
+name = "stp-cli"
 version = "0.1.0"
-authors = ["Nathan Miller <Nathan.Miller@wdc.com>"]
+authors = ["Nathan Miller <nathanm2@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-stm-core = { path = "../stm-core" }
+stp-core = { path = "../stp-core" }
