@@ -1,7 +1,0 @@
-[package]
-name = "stm-core"
-version = "0.1.0"
-authors = ["Nathan Miller <Nathan.Miller@wdc.com>"]
-edition = "2018"
-
-[dependencies]
