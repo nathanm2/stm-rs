@@ -48,7 +48,8 @@ enum DecoderState {
     Unsynced, // The decoder is looking for a SYNC packet.
     OpCode,   // Processing an opcode.
     Version(u8),
-    Data(DataFragment),
+    OldData(DataFragment),
+    Data(DataDecoder),
 }
 
 use self::DecoderState::*;
@@ -224,7 +225,18 @@ impl StpDecoder {
             Unsynced => {} // Do nothing.
             OpCode => self.decode_opcode(nibble, handler),
             Version(_) => self.decode_version(nibble, handler),
-            Data(_) => self.decode_data(nibble, handler),
+            OldData(_) => self.decode_data(nibble, handler),
+            Data(ref mut d) => match d.decode(nibble, self.span) {
+                None => (),
+                Some(Ok(packet)) => {
+                    self.report_packet(packet, handler);
+                    self.set_state(OpCode);
+                }
+                Some(Err(reason)) => {
+                    self.report_error(reason, handler);
+                    self.set_state(Unsynced);
+                }
+            },
         }
         self.offset += 1;
     }
@@ -292,46 +304,21 @@ impl StpDecoder {
     fn set_data_state(
         &mut self,
         opcode: stp::OpCode,
-        data_sz: u8,
+        data_sz: usize,
         has_timestamp: bool,
         handler: &mut dyn FnMut(Result),
     ) {
-        if self.valid_ts_type(handler) {
-            self.opcode = Some(opcode);
-
-            let data_span = self.span + data_sz as usize;
-            let mut timestamp_sz = 0;
-            let mut timestamp_span = 0;
-            let mut timestamp_sz_span = 0;
-            if has_timestamp {
-                if self.ts_type == Some(STPv1LEGACY) {
-                    timestamp_sz = 2;
-                    timestamp_span = data_span + 2;
-                } else {
-                    timestamp_sz_span = data_span + 1;
-                }
-            }
-            self.set_state(Data(DataFragment {
-                data_sz_span: 0,
-                data_sz,
-                data_span,
-                data: 0,
-                has_timestamp,
-                timestamp_sz_span,
-                timestamp_sz,
-                timestamp_span,
-                timestamp: 0,
-            }));
-        }
-    }
-
-    fn valid_ts_type(&mut self, handler: &mut dyn FnMut(Result)) -> bool {
         if let None = self.ts_type {
             self.report_error(MissingVersion, handler);
             self.set_state(Unsynced);
-            false
         } else {
-            true
+            self.set_state(Data(DataDecoder::new(
+                opcode,
+                self.is_le,
+                data_sz,
+                self.span,
+                if has_timestamp { self.ts_type } else { None },
+            )));
         }
     }
 
@@ -418,7 +405,7 @@ impl StpDecoder {
     }
 
     fn finish_data(&mut self, handler: &mut dyn FnMut(Result)) {
-        if let Data(ref tmp) = self.state {
+        if let OldData(ref tmp) = self.state {
             let data = if tmp.data_sz > 1 && self.is_le {
                 swap_nibbles(tmp.data, tmp.data_sz as usize)
             } else {
@@ -492,7 +479,7 @@ impl StpDecoder {
     }
 
     fn decode_data(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
-        if let Data(ref mut tmp) = self.state {
+        if let OldData(ref mut tmp) = self.state {
             match self.span {
                 s if s < tmp.data_span => tmp.data = tmp.data << 4 | nibble as u64,
                 s if s < tmp.timestamp_span => tmp.timestamp = tmp.timestamp << 4 | nibble as u64,
@@ -613,31 +600,24 @@ struct DataDecoder {
 }
 
 impl DataDecoder {
-    fn new(opcode: stp::OpCode, is_le: bool, data_sz: usize, span: usize) -> DataDecoder {
-        DataDecoder {
-            data: 0,
-            data_sz,
-            data_span: span + data_sz,
-            opcode,
-            is_le,
-            ts_decoder: None,
-        }
-    }
-
-    fn new_with_timestamp(
+    fn new(
         opcode: stp::OpCode,
         is_le: bool,
         data_sz: usize,
         span: usize,
-        ts_type: stp::TimestampType,
+        ts_type: Option<stp::TimestampType>,
     ) -> DataDecoder {
+        let ts_decoder = match ts_type {
+            Some(tt) => Some(TimestampDecoder::new(tt, is_le)),
+            None => None,
+        };
         DataDecoder {
             data: 0,
             data_sz,
             data_span: span + data_sz,
             opcode,
             is_le,
-            ts_decoder: Some(TimestampDecoder::new(ts_type, is_le)),
+            ts_decoder,
         }
     }
 
