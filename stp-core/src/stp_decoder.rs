@@ -31,24 +31,14 @@ pub struct Error {
 
 pub type Result = result::Result<Packet, Error>;
 
-#[allow(dead_code)]
-struct DataFragment {
-    data_sz_span: usize,
-    data_sz: u8,
-    data_span: usize,
-    data: u64,
-    has_timestamp: bool,
-    timestamp_sz_span: usize,
-    timestamp_sz: u8,
-    timestamp_span: usize,
-    timestamp: u64,
-}
+// Used internally.
+type PartialResult = result::Result<stp::Packet, ErrorReason>;
 
 enum DecoderState {
-    Unsynced, // The decoder is looking for a SYNC packet.
-    OpCode,   // Processing an opcode.
-    Version(u8),
-    Data(DataDecoder),
+    Unsynced,          // The decoder is looking for a SYNC packet.
+    OpCode,            // Decoding an opcode.
+    Version(u8),       // Decoding a Version packet.
+    Data(DataDecoder), // Decoding a data packet
 }
 
 use self::DecoderState::*;
@@ -81,7 +71,7 @@ impl StpDecoder {
         };
     }
 
-    /// Decode a stream of bytes.
+    /// Decode a slice of bytes.
     pub fn decode_bytes<F>(&mut self, bytes: &[u8], mut handler: F)
     where
         F: FnMut(Result),
@@ -92,7 +82,7 @@ impl StpDecoder {
         }
     }
 
-    /// Decode a stream of nibbles.
+    /// Decode a slice of nibbles.
     pub fn decode_nibbles<F>(&mut self, nibbles: &[u8], mut handler: F)
     where
         F: FnMut(Result),
@@ -102,7 +92,7 @@ impl StpDecoder {
         }
     }
 
-    /// Decode a nibble.
+    /// Decode a single nibble.
     pub fn decode_nibble<F>(&mut self, nibble: u8, mut handler: F)
     where
         F: FnMut(Result),
@@ -133,6 +123,176 @@ impl StpDecoder {
         }
     }
 
+    fn do_decode_nibble(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
+        self.span += 1;
+
+        let result = match self.state {
+            Unsynced => None, // Do nothing.
+            OpCode => self.decode_opcode(nibble),
+            Version(_) => self.decode_version(nibble),
+            Data(ref mut data_decoder) => data_decoder.decode(nibble, self.span),
+        };
+
+        // Convert a PartialResult into a Result and report it to the caller:
+        match result {
+            None => {}
+            Some(Ok(packet)) => {
+                self.report_packet(packet, handler);
+                self.set_state(OpCode);
+            }
+            Some(Err(reason)) => {
+                self.report_error(reason, handler);
+                self.set_state(Unsynced);
+            }
+        };
+        self.offset += 1;
+    }
+
+    fn decode_opcode(&mut self, nibble: u8) -> Option<PartialResult> {
+        match self.span {
+            1 => {
+                self.start = self.offset;
+                match nibble {
+                    0x0 => {
+                        // NULL packets are ignored (for now).
+                        self.span = 0;
+                        None
+                    }
+                    0x1 => self.set_data_state(M8, 2, false),
+                    0x2 => self.set_data_state(MERR, 2, false),
+                    0x3 => self.set_data_state(C8, 2, false),
+                    0x4 => self.set_data_state(D8, 2, false),
+                    0x5 => self.set_data_state(D16, 4, false),
+                    0x6 => self.set_data_state(D32, 8, false),
+                    0x7 => self.set_data_state(D64, 16, false),
+                    0x8 => self.set_data_state(D8MTS, 2, true),
+                    0x9 => self.set_data_state(D16MTS, 4, true),
+                    0xA => self.set_data_state(D32MTS, 8, true),
+                    0xB => self.set_data_state(D64MTS, 16, true),
+                    0xC => self.set_data_state(D4, 1, false),
+                    0xD => self.set_data_state(D4MTS, 1, true),
+                    0xE => self.set_data_state(FLAG_TS, 0, true),
+                    0xF => None,
+                    _ => panic!("Not a nibble: {}", nibble),
+                }
+            }
+            2 => match nibble {
+                0x0 => None,
+                0x1 => self.set_data_state(M16, 4, false),
+                0x2 => self.set_data_state(GERR, 2, false),
+                0x3 => self.set_data_state(C16, 4, false),
+                0x4 => self.set_data_state(D8TS, 2, true),
+                0x5 => self.set_data_state(D16TS, 4, true),
+                0x6 => self.set_data_state(D32TS, 8, true),
+                0x7 => self.set_data_state(D64TS, 16, true),
+                0x8 => self.set_data_state(D8M, 2, false),
+                0x9 => self.set_data_state(D16M, 4, false),
+                0xA => self.set_data_state(D32M, 8, false),
+                0xB => self.set_data_state(D64M, 16, false),
+                0xC => self.set_data_state(D4TS, 1, true),
+                0xD => self.set_data_state(D4M, 1, false),
+                0xE => Some(Ok(stp::Packet::Flag { timestamp: None })),
+                0xF => Some(Err(InvalidOpCode {
+                    value: 0xF0 | (nibble as u16),
+                })),
+                _ => panic!("Not a nibble: {}", nibble),
+            },
+            3 => match nibble {
+                0x0 => self.set_version_state(),
+                0x8 => self.set_data_state(FREQ, 8, false),
+                0x9 => self.set_data_state(FREQ_TS, 8, true),
+                0xF => None,
+                // TODO: Support remaining opcodes!
+                _ => Some(Err(InvalidOpCode {
+                    value: 0xF00 | (nibble as u16),
+                })),
+            },
+            4 => match nibble {
+                0x0 => self.set_data_state(FREQ_40, 10, false),
+                0x1 => self.set_data_state(FREQ_40_TS, 10, true),
+                _ => Some(Err(InvalidOpCode {
+                    value: 0xF0F0 | (nibble as u16),
+                })),
+            },
+            _ => panic!("Unexpected span: {}", self.span),
+        }
+    }
+
+    fn set_data_state(
+        &mut self,
+        opcode: stp::OpCode,
+        data_sz: usize,
+        has_timestamp: bool,
+    ) -> Option<PartialResult> {
+        if let None = self.ts_type {
+            Some(Err(MissingVersion))
+        } else {
+            self.set_state(Data(DataDecoder::new(
+                opcode,
+                self.is_le,
+                data_sz,
+                self.span,
+                if has_timestamp { self.ts_type } else { None },
+            )));
+            None
+        }
+    }
+
+    fn set_version_state(&mut self) -> Option<PartialResult> {
+        self.set_state(Version(0));
+        None
+    }
+
+    fn decode_version(&mut self, nibble: u8) -> Option<PartialResult> {
+        match self.span {
+            4 => {
+                let ts_type = match nibble & 0x7 {
+                    0 | 1 => STPv1LEGACY,
+                    2 => STPv2NATDELTA,
+                    3 => STPv2NAT,
+                    4 => STPv2GRAY,
+                    value => {
+                        return Some(Err(InvalidTimestampType { value }));
+                    }
+                };
+                self.ts_type = Some(ts_type);
+                if nibble & 0x8 == 0 {
+                    Some(Ok(stp::Packet::Version {
+                        version: if nibble == 0 { STPv1 } else { STPv2_1 },
+                        ts_type,
+                        is_le: false,
+                    }))
+                } else {
+                    None
+                }
+            }
+            5 => {
+                self.state = Version(nibble);
+                None
+            }
+            6 => {
+                if let Version(prior_nibble) = self.state {
+                    let payload = prior_nibble << 4 | nibble;
+                    self.is_le = if payload & 0x80 == 0x80 { true } else { false };
+                    if payload & 0x7F == 0x01 {
+                        Some(Ok(stp::Packet::Version {
+                            version: STPv2_2,
+                            ts_type: self.ts_type.unwrap(),
+                            is_le: self.is_le,
+                        }))
+                    } else {
+                        Some(Err(InvalidVersion {
+                            value: payload & 0x7F,
+                        }))
+                    }
+                } else {
+                    panic!("Unexpected state");
+                }
+            }
+            _ => panic!("Unexpected VERSION span: {}", self.span),
+        }
+    }
+
     fn handle_async(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
         let span = ASYNC_F_COUNT as usize + 1;
 
@@ -147,8 +307,8 @@ impl StpDecoder {
                 span,
             }));
 
-            // Per the spec, an ASYNC must be followed by a VERSION packet, we can use ts_type to tell
-            // if this has been violated.
+            // Per the spec, an ASYNC must be followed by a VERSION packet, we can use ts_type to
+            // tell if this has been violated.
             self.ts_type = None;
             self.is_le = false;
 
@@ -207,175 +367,6 @@ impl StpDecoder {
             self.opcode = None;
         }
         self.state = new_state;
-    }
-
-    fn do_decode_nibble(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
-        self.span += 1;
-        match self.state {
-            Unsynced => {} // Do nothing.
-            OpCode => self.decode_opcode(nibble, handler),
-            Version(_) => self.decode_version(nibble, handler),
-            Data(ref mut d) => match d.decode(nibble, self.span) {
-                None => (),
-                Some(Ok(packet)) => {
-                    self.report_packet(packet, handler);
-                    self.set_state(OpCode);
-                }
-                Some(Err(reason)) => {
-                    self.report_error(reason, handler);
-                    self.set_state(Unsynced);
-                }
-            },
-        }
-        self.offset += 1;
-    }
-
-    fn decode_opcode(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
-        match self.span {
-            1 => {
-                self.start = self.offset;
-                match nibble {
-                    0x0 => self.span = 0, // NULL packet.  Ignore.
-                    0x1 => self.set_data_state(M8, 2, false, handler),
-                    0x2 => self.set_data_state(MERR, 2, false, handler),
-                    0x3 => self.set_data_state(C8, 2, false, handler),
-                    0x4 => self.set_data_state(D8, 2, false, handler),
-                    0x5 => self.set_data_state(D16, 4, false, handler),
-                    0x6 => self.set_data_state(D32, 8, false, handler),
-                    0x7 => self.set_data_state(D64, 16, false, handler),
-                    0x8 => self.set_data_state(D8MTS, 2, true, handler),
-                    0x9 => self.set_data_state(D16MTS, 4, true, handler),
-                    0xA => self.set_data_state(D32MTS, 8, true, handler),
-                    0xB => self.set_data_state(D64MTS, 16, true, handler),
-                    0xC => self.set_data_state(D4, 1, false, handler),
-                    0xD => self.set_data_state(D4MTS, 1, true, handler),
-                    0xE => self.set_data_state(FLAG_TS, 0, true, handler),
-                    0xF => {}
-                    _ => panic!("Not a nibble: {}", nibble),
-                }
-            }
-            2 => match nibble {
-                0x0 => {}
-                0x1 => self.set_data_state(M16, 4, false, handler),
-                0x2 => self.set_data_state(GERR, 2, false, handler),
-                0x3 => self.set_data_state(C16, 4, false, handler),
-                0x4 => self.set_data_state(D8TS, 2, true, handler),
-                0x5 => self.set_data_state(D16TS, 4, true, handler),
-                0x6 => self.set_data_state(D32TS, 8, true, handler),
-                0x7 => self.set_data_state(D64TS, 16, true, handler),
-                0x8 => self.set_data_state(D8M, 2, false, handler),
-                0x9 => self.set_data_state(D16M, 4, false, handler),
-                0xA => self.set_data_state(D32M, 8, false, handler),
-                0xB => self.set_data_state(D64M, 16, false, handler),
-                0xC => self.set_data_state(D4TS, 1, true, handler),
-                0xD => self.set_data_state(D4M, 1, false, handler),
-                0xE => self.handle_flag_packet(handler),
-                0xF => self.handle_invalid_opcode(0xFF, handler),
-                _ => panic!("Not a nibble: {}", nibble),
-            },
-            3 => match nibble {
-                0x0 => self.set_state(Version(0)),
-                0x8 => self.set_data_state(FREQ, 8, false, handler),
-                0x9 => self.set_data_state(FREQ_TS, 8, true, handler),
-                0xF => {}
-                // TODO: Support remaining opcodes!
-                _ => self.handle_invalid_opcode(0xF00 | (nibble as u16), handler),
-            },
-            4 => match nibble {
-                0x0 => self.set_data_state(FREQ_40, 10, false, handler),
-                0x1 => self.set_data_state(FREQ_40_TS, 10, true, handler),
-                _ => self.handle_invalid_opcode(0xF0F0 | (nibble as u16), handler),
-            },
-            _ => panic!("Unexpected span: {}", self.span),
-        }
-    }
-
-    fn set_data_state(
-        &mut self,
-        opcode: stp::OpCode,
-        data_sz: usize,
-        has_timestamp: bool,
-        handler: &mut dyn FnMut(Result),
-    ) {
-        if let None = self.ts_type {
-            self.report_error(MissingVersion, handler);
-            self.set_state(Unsynced);
-        } else {
-            self.set_state(Data(DataDecoder::new(
-                opcode,
-                self.is_le,
-                data_sz,
-                self.span,
-                if has_timestamp { self.ts_type } else { None },
-            )));
-        }
-    }
-
-    fn handle_invalid_opcode(&mut self, bad_opcode: u16, handler: &mut dyn FnMut(Result)) {
-        self.report_error(InvalidOpCode { value: bad_opcode }, handler);
-        self.set_state(Unsynced);
-    }
-
-    fn handle_flag_packet(&mut self, handler: &mut dyn FnMut(Result)) {
-        self.report_packet(stp::Packet::Flag { timestamp: None }, handler);
-        self.set_state(OpCode);
-    }
-
-    fn decode_version(&mut self, nibble: u8, handler: &mut dyn FnMut(Result)) {
-        match self.span {
-            4 => {
-                let ts_type = match nibble & 0x7 {
-                    0 | 1 => STPv1LEGACY,
-                    2 => STPv2NATDELTA,
-                    3 => STPv2NAT,
-                    4 => STPv2GRAY,
-                    value => {
-                        self.report_error(InvalidTimestampType { value }, handler);
-                        self.set_state(Unsynced);
-                        return;
-                    }
-                };
-                self.ts_type = Some(ts_type);
-                if nibble & 0x8 == 0 {
-                    self.report_packet(
-                        stp::Packet::Version {
-                            version: if nibble == 0 { STPv1 } else { STPv2_1 },
-                            ts_type,
-                            is_le: false,
-                        },
-                        handler,
-                    );
-                    self.set_state(OpCode);
-                }
-            }
-            5 => self.state = Version(nibble),
-            6 => {
-                if let Version(prior_nibble) = self.state {
-                    let payload = prior_nibble << 4 | nibble;
-                    self.is_le = if payload & 0x80 == 0x80 { true } else { false };
-                    if payload & 0x7F == 0x01 {
-                        self.report_packet(
-                            stp::Packet::Version {
-                                version: STPv2_2,
-                                ts_type: self.ts_type.unwrap(),
-                                is_le: self.is_le,
-                            },
-                            handler,
-                        );
-                        self.set_state(OpCode);
-                    } else {
-                        self.report_error(
-                            InvalidVersion {
-                                value: payload & 0x7F,
-                            },
-                            handler,
-                        );
-                        self.set_state(Unsynced);
-                    }
-                }
-            }
-            _ => panic!("Unexpected VERSION span: {}", self.span),
-        }
     }
 }
 
@@ -454,8 +445,6 @@ impl TimestampDecoder {
     }
 }
 
-type PacketResult = result::Result<stp::Packet, ErrorReason>;
-
 struct DataDecoder {
     data: u64,
     data_sz: usize,
@@ -487,7 +476,7 @@ impl DataDecoder {
         }
     }
 
-    fn decode(&mut self, nibble: u8, span: usize) -> Option<PacketResult> {
+    fn decode(&mut self, nibble: u8, span: usize) -> Option<PartialResult> {
         if span <= self.data_span {
             self.data = self.data << 4 | nibble as u64;
             if span == self.data_span && self.ts_decoder.is_none() {
