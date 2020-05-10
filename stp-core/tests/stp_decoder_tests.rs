@@ -81,6 +81,12 @@ fn truncated_by_async() {
         span: 22,
     }));
 
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null { timestamp: None },
+        start: 23,
+        span: 1,
+    }));
+
     exp.push(Err(Error {
         reason: TruncatedPacket { opcode: None },
         start: 24,
@@ -1029,6 +1035,8 @@ fn null_test() {
     stream.extend_from_slice(&ASYNC_NIBBLES);
     stream.extend_from_slice(&VERSION_NIBBLES);
     stream.extend_from_slice(&NULL_TS);
+    stream.push(0);
+    stream.push(0);
 
     decoder.decode_nibbles(&stream, |r| {
         if is_null(&r) {
@@ -1045,6 +1053,18 @@ fn null_test() {
         },
         start: 28,
         span: 5,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null { timestamp: None },
+        start: 33,
+        span: 1,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null { timestamp: None },
+        start: 34,
+        span: 1,
     }));
 
     assert_eq!(results, exp);

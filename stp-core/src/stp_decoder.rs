@@ -153,11 +153,7 @@ impl StpDecoder {
             1 => {
                 self.start = self.offset;
                 match nibble {
-                    0x0 => {
-                        // NULL packets are ignored (for now).
-                        self.span = 0;
-                        None
-                    }
+                    0x0 => Some(Ok(stp::Packet::Null { timestamp: None })),
                     0x1 => self.set_data_state(M8, 2, false),
                     0x2 => self.set_data_state(MERR, 2, false),
                     0x3 => self.set_data_state(C8, 2, false),
@@ -172,12 +168,12 @@ impl StpDecoder {
                     0xC => self.set_data_state(D4, 1, false),
                     0xD => self.set_data_state(D4MTS, 1, true),
                     0xE => self.set_data_state(FLAG_TS, 0, true),
-                    0xF => None,
+                    0xF => None, // Continued in next nibble...
                     _ => panic!("Not a nibble: {}", nibble),
                 }
             }
             2 => match nibble {
-                0x0 => None,
+                0x0 => None, // Continued in next nibble...
                 0x1 => self.set_data_state(M16, 4, false),
                 0x2 => self.set_data_state(GERR, 2, false),
                 0x3 => self.set_data_state(C16, 4, false),
