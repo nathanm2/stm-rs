@@ -146,7 +146,7 @@ fn invalid_opcode() {
     stream.push(0xF);
     stream.push(0x0);
     stream.push(0xF);
-    stream.push(0x3);
+    stream.push(0x3); // <= Invalid op-code
 
     decoder.decode_nibbles(&stream, |r| results.push(r));
 
@@ -1002,6 +1002,49 @@ fn invalid_ts_test() {
         reason: InvalidTimestampSize,
         start: 28,
         span: 3,
+    }));
+
+    assert_eq!(results, exp);
+}
+
+fn is_null(r: &Result) -> bool {
+    match r {
+        Ok(Packet {
+            packet: stp::Packet::Null { .. },
+            ..
+        }) => true,
+        _ => false,
+    }
+}
+
+const NULL_TS: [u8; 5] = [0xF, 0x0, 0x1, 0x1, 0x2];
+
+#[test]
+fn null_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&NULL_TS);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_null(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::Null {
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 1,
+                value: 0x2,
+            }),
+        },
+        start: 28,
+        span: 5,
     }));
 
     assert_eq!(results, exp);

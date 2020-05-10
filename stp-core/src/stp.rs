@@ -39,6 +39,7 @@ pub enum OpCode {
     D4M = 0xFD,
     FLAG = 0xFE,
     VERSION = 0xF00,
+    NULL_TS = 0xF01,
     FREQ = 0xF08,
     FREQ_TS = 0xF09,
     FREQ_40 = 0xF0F0,

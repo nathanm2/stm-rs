@@ -199,6 +199,7 @@ impl StpDecoder {
             },
             3 => match nibble {
                 0x0 => self.set_version_state(),
+                0x1 => self.set_data_state(NULL_TS, 0, true),
                 0x8 => self.set_data_state(FREQ, 8, false),
                 0x9 => self.set_data_state(FREQ_TS, 8, true),
                 0xF => None,
@@ -526,6 +527,7 @@ impl DataDecoder {
                 frequency: data,
                 timestamp,
             },
+            NULL_TS => stp::Packet::Null { timestamp },
             _ => panic!("Unexpected data opcode: {:?}", opcode),
         }
     }
