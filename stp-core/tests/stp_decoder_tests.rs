@@ -1069,3 +1069,60 @@ fn null_test() {
 
     assert_eq!(results, exp);
 }
+
+fn is_user(r: &Result) -> bool {
+    match r {
+        Ok(Packet {
+            packet: stp::Packet::User { .. },
+            ..
+        }) => true,
+        _ => false,
+    }
+}
+
+const USER_NIBBLES: [u8; 8] = [0xf, 0x0, 0x2, 0x3, 0x1, 0x2, 0x3, 0x4];
+const USER_TS_NIBBLES: [u8; 7] = [0xf, 0x0, 0x3, 0x0, 0x1, 0x1, 0x1];
+
+#[test]
+fn user_test() {
+    let mut results = Vec::<Result>::new();
+    let mut exp = Vec::<Result>::new();
+    let mut decoder = StpDecoder::new();
+    let mut stream = Vec::<u8>::with_capacity(46);
+
+    stream.extend_from_slice(&ASYNC_NIBBLES);
+    stream.extend_from_slice(&VERSION_NIBBLES);
+    stream.extend_from_slice(&USER_NIBBLES);
+    stream.extend_from_slice(&USER_TS_NIBBLES);
+
+    decoder.decode_nibbles(&stream, |r| {
+        if is_user(&r) {
+            results.push(r);
+        }
+    });
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::User {
+            length: 4,
+            payload: 0x1234,
+            timestamp: None,
+        },
+        start: 28,
+        span: 8,
+    }));
+
+    exp.push(Ok(Packet {
+        packet: stp::Packet::User {
+            length: 1,
+            payload: 0x1,
+            timestamp: Some(Timestamp::STPv2NATDELTA {
+                length: 1,
+                value: 0x1,
+            }),
+        },
+        start: 36,
+        span: 7,
+    }));
+
+    assert_eq!(results, exp);
+}

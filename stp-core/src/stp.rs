@@ -40,6 +40,8 @@ pub enum OpCode {
     FLAG = 0xFE,
     VERSION = 0xF00,
     NULL_TS = 0xF01,
+    USER = 0xF02,
+    USER_TS = 0xF03,
     FREQ = 0xF08,
     FREQ_TS = 0xF09,
     FREQ_40 = 0xF0F0,
@@ -86,6 +88,11 @@ pub enum Packet {
     Data {
         opcode: OpCode,
         data: u64,
+        timestamp: Option<Timestamp>,
+    },
+    User {
+        length: u8, // Payload length in nibbles.
+        payload: u64,
         timestamp: Option<Timestamp>,
     },
     Frequency {

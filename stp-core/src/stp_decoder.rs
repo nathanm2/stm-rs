@@ -196,6 +196,8 @@ impl StpDecoder {
             3 => match nibble {
                 0x0 => self.set_version_state(),
                 0x1 => self.set_data_state(NULL_TS, 0, true),
+                0x2 => self.set_variable_data_state(USER, false),
+                0x3 => self.set_variable_data_state(USER_TS, true),
                 0x8 => self.set_data_state(FREQ, 8, false),
                 0x9 => self.set_data_state(FREQ_TS, 8, true),
                 0xF => None,
@@ -228,6 +230,24 @@ impl StpDecoder {
                 opcode,
                 self.is_le,
                 data_sz,
+                self.span,
+                if has_timestamp { self.ts_type } else { None },
+            )));
+            None
+        }
+    }
+
+    fn set_variable_data_state(
+        &mut self,
+        opcode: stp::OpCode,
+        has_timestamp: bool,
+    ) -> Option<PartialResult> {
+        if let None = self.ts_type {
+            Some(Err(MissingVersion))
+        } else {
+            self.set_state(Data(DataDecoder::new_variable_data(
+                opcode,
+                self.is_le,
                 self.span,
                 if has_timestamp { self.ts_type } else { None },
             )));
@@ -473,6 +493,15 @@ impl DataDecoder {
         }
     }
 
+    fn new_variable_data(
+        opcode: stp::OpCode,
+        is_le: bool,
+        _span: usize,
+        ts_type: Option<stp::TimestampType>,
+    ) -> DataDecoder {
+        DataDecoder::new(opcode, is_le, 0, 0, ts_type)
+    }
+
     fn decode(&mut self, nibble: u8, span: usize) -> Option<PartialResult> {
         if span <= self.data_span {
             self.data = self.data << 4 | nibble as u64;
@@ -481,6 +510,10 @@ impl DataDecoder {
             } else {
                 None
             }
+        } else if self.data_span == 0 {
+            self.data_sz = (nibble as usize) + 1;
+            self.data_span = span + self.data_sz;
+            None
         } else {
             match self.ts_decoder.as_mut().unwrap().decode(nibble, span) {
                 None => None,
@@ -524,6 +557,12 @@ impl DataDecoder {
                 timestamp,
             },
             NULL_TS => stp::Packet::Null { timestamp },
+            USER | USER_TS => stp::Packet::User {
+                length: self.data_sz as u8,
+                payload: data,
+                timestamp,
+            },
+
             _ => panic!("Unexpected data opcode: {:?}", opcode),
         }
     }
