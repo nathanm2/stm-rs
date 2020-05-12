@@ -1,153 +1,191 @@
+#[macro_use]
+extern crate clap;
+
+use clap::ArgMatches;
+use colored::*;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fmt;
 use std::fs::File;
-use std::io::{self, ErrorKind, Read};
-use stm_core::frame_decoder::{self, FrameConsumer, FrameDecoder};
+use std::io::{self, prelude::*, ErrorKind};
+use std::result;
+use stp_core::frame_decoder::{self, FrameDecoder};
 
-// CliError *************************************************************************************
+const PROG_NAME: &str = crate_name!();
 
-#[derive(Debug)]
-enum CliError {
-    UsageError(String),
-    OtherError(String),
+struct CliError(Option<String>);
+type Result = result::Result<(), CliError>;
+
+fn main() {
+    if let Err(CliError(o)) = run() {
+        if let Some(msg) = o {
+            io::stdout().flush().unwrap();
+            eprintln!("\n{}: {}", PROG_NAME, msg);
+        }
+        std::process::exit(1);
+    }
 }
 
-use CliError::*;
+fn run() -> Result {
+    let app_m = clap_app!(stp =>
+        (version: crate_version!())
+        (author: crate_authors!())
+        (about: crate_description!())
+        (@subcommand nibbles =>
+            (about: "Displays trace data as nibbles")
+            (@arg FILE: "STP file")
+            (@arg bail: -b --bail "Stop on first error.")
+            (@arg file_offsets: --("file-offsets") "Display offsets relative to the file.")
+        )
+        (@subcommand packets =>
+            (about: "Displays STP packets")
+            (@arg FILE: "STP file")
+        )
+    )
+    .get_matches();
 
-impl Error for CliError {}
-
-impl fmt::Display for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            UsageError(msg) | OtherError(msg) => write!(f, "{}", msg),
+    match app_m.subcommand() {
+        ("nibbles", Some(sub_m)) => nibbles(&app_m, sub_m),
+        ("packets", Some(sub_m)) => packets(&app_m, sub_m),
+        _ => {
+            println!("{}", app_m.usage());
+            Ok(())
         }
     }
 }
 
-type Result<T> = std::result::Result<T, CliError>;
-
-impl std::convert::From<io::Error> for CliError {
-    fn from(err: io::Error) -> CliError {
-        OtherError(format!("{}", err))
+fn get_input(sub_m: &ArgMatches) -> result::Result<Box<dyn Read>, CliError> {
+    match sub_m.value_of("FILE") {
+        Some(path) => match File::open(path) {
+            Ok(f) => Ok(Box::new(f)),
+            Err(e) => Err(CliError(Some(format!("{}: {}", e, path)))),
+        },
+        None => Ok(Box::new(io::stdin())),
     }
 }
 
 impl std::convert::From<frame_decoder::Error> for CliError {
     fn from(err: frame_decoder::Error) -> CliError {
-        OtherError(format!("{}", err))
+        match err {
+            // 'Stop' does not need to report anything.
+            e if e.reason == frame_decoder::ErrorReason::Stop => CliError(None),
+            e => CliError(Some(format!("{}", e))),
+        }
     }
 }
 
-// NibbleDump **********************************************************************************
+const BUF_SIZE: usize = 4 * 1024;
 
-struct NibbleFormat {
-    offsets: HashMap<Option<u8>, usize>,
-    cur_id: Option<u8>, // Current Id
-    cur_offset: usize,
-    col: usize,
+fn nibbles(_app_m: &ArgMatches, sub_m: &ArgMatches) -> Result {
+    let mut input = get_input(sub_m)?;
+    let bail = sub_m.is_present("bail");
+    let file_offset = sub_m.is_present("file_offsets");
+    let mut buf = [0; BUF_SIZE];
+    let mut display = NibbleDisplay::new(bail, file_offset);
+    let mut decoder = FrameDecoder::new(false, None);
+
+    loop {
+        match input.read(&mut buf) {
+            Ok(0) => {
+                decoder.finish(|r| display.display(r))?;
+                print!("\n");
+                break;
+            }
+            Ok(len) => decoder.decode(&buf[..len], |r| display.display(r))?,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(CliError(Some(format!("{}", e)))),
+        };
+    }
+    Ok(())
 }
 
-impl NibbleFormat {
-    fn new() -> NibbleFormat {
-        NibbleFormat {
+struct NibbleDisplay {
+    offsets: HashMap<Option<u8>, usize>,
+    cur_id: Option<u8>,
+    cur_offset: usize,
+    column: usize,
+    bail: bool,
+    file_offset: bool,
+    first_stream: bool,
+}
+
+impl NibbleDisplay {
+    fn new(bail: bool, file_offset: bool) -> NibbleDisplay {
+        NibbleDisplay {
             offsets: HashMap::new(),
             cur_id: Some(0xFF), // Intentionally set to an invalid Stream ID.
             cur_offset: 0,
-            col: 0,
+            column: 0,
+            bail,
+            file_offset,
+            first_stream: true,
         }
     }
-}
 
-impl FrameConsumer for NibbleFormat {
-    fn stream_byte(&mut self, id: Option<u8>, data: u8) {
+    fn display_data(&mut self, id: Option<u8>, data: u8, offset: usize) {
         if id != self.cur_id {
             self.offsets.insert(self.cur_id, self.cur_offset);
             self.cur_offset = *self.offsets.entry(id).or_insert(0);
-            self.col = 0;
+            self.column = 0;
             self.cur_id = id;
+            if self.first_stream {
+                self.first_stream = false;
+            } else {
+                print!("\n\n");
+            }
             match id {
-                None => print!("\n\nStream None:"),
-                Some(id) => print!("\n\nStream {:#X}:", id),
+                None => print!("Stream None:"),
+                Some(id) => print!("Stream {:#X}:", id),
             }
         }
 
-        if self.col % 16 == 0 {
-            print!("\n{:012X} |", self.cur_offset * 2);
-            self.col = 0;
-        } else if self.col == 8 {
+        if self.column % 16 == 0 {
+            let o = if self.file_offset {
+                offset
+            } else {
+                self.cur_offset * 2
+            };
+            print!("\n{:012X} |", o);
+            self.column = 0;
+        } else if self.column == 8 {
             print!(" ");
         }
         print!(" {:x} {:x}", data & 0xF, data >> 4);
 
-        self.col += 1;
+        self.column += 1;
         self.cur_offset += 1;
     }
-}
 
-// Driver ***************************************************************************************
-
-const DEFAULT_BUF_SIZE: usize = 4 * 1024;
-
-fn process_stream<R>(
-    reader: &mut R,
-    decoder: &mut FrameDecoder,
-    fmt: &mut NibbleFormat,
-) -> Result<()>
-where
-    R: ?Sized + Read,
-{
-    let mut buf = [0; DEFAULT_BUF_SIZE];
-    let mut total = 0;
-    loop {
-        let len = match reader.read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(len) => len,
-            Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-            Err(e) => return Err(CliError::from(e)),
-        };
-        decoder.decode(&buf[..len], fmt, total)?;
-        total += len;
-    }
-}
-
-fn run() -> Result<()> {
-    let mut decoder = FrameDecoder::new();
-    let mut fmt = NibbleFormat::new();
-    let paths: Vec<String> = std::env::args().skip(1).collect();
-
-    if paths.is_empty() {
-        return Err(UsageError(format!("No files specified")))?;
+    fn display_error(&mut self, err: frame_decoder::Error) {
+        let msg = format!("** {}", err);
+        print!("\n\n{}\n", msg.red().bold());
+        self.column = 0;
     }
 
-    for path in paths {
-        let mut f = match File::open(&path) {
-            Ok(f) => f,
-            Err(err) => return Err(OtherError(format!("{}: {}", err, path))),
-        };
-        process_stream(&mut f, &mut decoder, &mut fmt)?;
-    }
-
-    Ok(())
-}
-
-const PROG_NAME: &str = "stm-cli";
-
-fn display_usage() {
-    println!("usage: {} [OPTIONS] [FILE ...]", PROG_NAME);
-}
-
-fn main() {
-    if let Err(err) = run() {
-        match err {
-            UsageError(msg) => {
-                println!("{}: {}", PROG_NAME, msg);
-                display_usage();
+    fn display(
+        &mut self,
+        r: frame_decoder::Result<frame_decoder::Data>,
+    ) -> frame_decoder::Result<()> {
+        match r {
+            Ok(d) => {
+                self.display_data(d.id, d.data, d.offset);
+                Ok(())
             }
-            OtherError(msg) => {
-                eprintln!("{}: {}", PROG_NAME, msg);
+            Err(e) => {
+                let offset = e.offset;
+                self.display_error(e);
+                if self.bail {
+                    Err(frame_decoder::Error {
+                        offset,
+                        reason: frame_decoder::ErrorReason::Stop,
+                    })
+                } else {
+                    Ok(())
+                }
             }
         }
-        std::process::exit(1);
     }
+}
+
+fn packets(_app_m: &ArgMatches, sub_m: &ArgMatches) -> Result {
+    let mut _input = get_input(sub_m)?;
+    Ok(())
 }

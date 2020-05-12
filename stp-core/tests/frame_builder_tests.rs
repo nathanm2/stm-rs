@@ -9,6 +9,21 @@ fn bad_offset() {
         set_stream_id(&mut frames, 1, 0x01, true),
         Err(InvalidOffset(1))
     );
+
+    assert_eq!(
+        set_stream_id(&mut frames, 32, 0x01, true),
+        Err(InvalidOffset(32))
+    );
+
+    assert_eq!(
+        set_stream_id(&mut frames, 17, 0x01, true),
+        Err(InvalidOffset(17))
+    );
+
+    assert_eq!(
+        set_stream_data(&mut frames, 32, 0x01),
+        Err(InvalidOffset(32))
+    );
 }
 
 #[test]
@@ -18,6 +33,11 @@ fn bad_offset_aux() {
     assert_eq!(
         set_stream_id(&mut frames, 15, 0x01, true),
         Err(InvalidOffset(15))
+    );
+
+    assert_eq!(
+        set_stream_data(&mut frames, 31, 0x01),
+        Err(InvalidOffset(31))
     );
 }
 
@@ -46,8 +66,10 @@ fn immediate_id() {
     let mut frames = [0; 32];
     let mut exp = [0; 32];
     assert_eq!(set_stream_id(&mut frames, 2, 1, true), Ok(()));
+    assert_eq!(set_stream_id(&mut frames, 18, 1, true), Ok(()));
 
     exp[2] = 0x03;
+    exp[18] = 0x03;
     assert_eq!(frames, exp);
 }
 
@@ -56,9 +78,12 @@ fn delayed_id() {
     let mut frames = [0; 32];
     let mut exp = [0; 32];
     assert_eq!(set_stream_id(&mut frames, 2, 1, false), Ok(()));
+    assert_eq!(set_stream_id(&mut frames, 18, 1, false), Ok(()));
 
     exp[2] = 0x03;
     exp[15] = 0x02;
+    exp[18] = 0x03;
+    exp[31] = 0x02;
     assert_eq!(frames, exp);
 }
 
@@ -67,11 +92,16 @@ fn basic_data() {
     let mut frames = [0; 32];
     assert_eq!(set_stream_data(&mut frames, 0, 3), Ok(()));
     assert_eq!(set_stream_data(&mut frames, 1, 3), Ok(()));
+    assert_eq!(set_stream_data(&mut frames, 16, 3), Ok(()));
+    assert_eq!(set_stream_data(&mut frames, 17, 3), Ok(()));
 
     let mut exp = [0; 32];
     exp[0] = 0x02;
     exp[1] = 0x03;
     exp[15] = 0x01;
+    exp[16] = 0x02;
+    exp[17] = 0x03;
+    exp[31] = 0x01;
     assert_eq!(frames, exp);
 }
 

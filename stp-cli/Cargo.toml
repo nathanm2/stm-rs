@@ -3,6 +3,13 @@ name = "stp-cli"
 version = "0.1.0"
 authors = ["Nathan Miller <nathanm2@gmail.com>"]
 edition = "2018"
+description = "A tool for working with System Trace Protocol (STP) data"
+
+[[bin]]
+name = "stp"
+path = "src/main.rs"
 
 [dependencies]
 stp-core = { path = "../stp-core" }
+clap = "~2.33.1"
+colored = "~1.9.3"
