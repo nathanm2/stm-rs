@@ -5,11 +5,11 @@ use clap::ArgMatches;
 
 fn main() {
     let app_m = clap_app!(stp =>
-        (version: "0.1")
-        (author: "Nathan M. <nathanm2@gmail.com>")
-        (about: "A tool for working with System Trace Protocol (STP) data")
-        (@subcommand nibbles =>
-            (about: "Displays the nibble stream")
+        (version: crate_version!())
+        (author: crate_authors!("\n"))
+        (about: crate_description!())
+        (@subcommand streams =>
+            (about: "Displays the Trace Data streams")
             (@arg FILE: "STP file")
         )
         (@subcommand packets =>
@@ -19,17 +19,22 @@ fn main() {
     )
     .get_matches();
 
-    match app_m.subcommand() {
-        ("nibbles", Some(sub_m)) => nibbles(sub_m),
-        ("packets", Some(sub_m)) => packets(sub_m),
-        _ => {}
-    }
+    let _rc = match app_m.subcommand() {
+        ("streams", Some(sub_m)) => streams(&app_m, sub_m),
+        ("packets", Some(sub_m)) => packets(&app_m, sub_m),
+        _ => {
+            println!("{}", app_m.usage());
+            0
+        }
+    };
 }
 
-fn nibbles(_sub_m: &ArgMatches) {
-    print!("Inside nibbles\n");
+fn streams(_app_m: &ArgMatches, _sub_m: &ArgMatches) -> i32 {
+    print!("Inside streams\n");
+    0
 }
 
-fn packets(_sub_m: &ArgMatches) {
+fn packets(_app_m: &ArgMatches, _sub_m: &ArgMatches) -> i32 {
     print!("Inside packets\n");
+    1
 }
