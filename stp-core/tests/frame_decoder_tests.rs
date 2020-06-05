@@ -1,16 +1,42 @@
 use std::collections::HashMap;
+use std::result;
 use stp_core::frame_builder::*;
 use stp_core::frame_decoder::{decode_frames, Error, ErrorReason::*};
 
-trait DataMap {
-    fn save(&mut self, id: Option<u8>, data: u8);
+struct Recorder {
+    data: HashMap<Option<u8>, Vec<u8>>,
+    errors: Option<Vec<Error>>,
 }
 
-impl DataMap for HashMap<Option<u8>, Vec<u8>> {
-    fn save(&mut self, id: Option<u8>, data: u8) {
-        self.entry(id)
-            .and_modify(|v| v.push(data))
-            .or_insert(vec![data]);
+impl Recorder {
+    fn new(continue_on_error: bool) -> Recorder {
+        Recorder {
+            data: HashMap::new(),
+            errors: if continue_on_error {
+                Some(Vec::new())
+            } else {
+                None
+            },
+        }
+    }
+
+    fn record(&mut self, r: result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error> {
+        match r {
+            Ok((id, data)) => {
+                self.data
+                    .entry(id)
+                    .and_modify(|v| v.push(data))
+                    .or_insert(vec![data]);
+                Ok(())
+            }
+            Err(e) => match &mut self.errors {
+                Some(v) => {
+                    v.push(e);
+                    Ok(())
+                }
+                None => Err(e),
+            },
+        }
     }
 }
 
@@ -18,10 +44,10 @@ impl DataMap for HashMap<Option<u8>, Vec<u8>> {
 #[test]
 fn partial_frame() {
     let frames = [0; 31];
-    let mut map = HashMap::new();
+    let mut recorder = Recorder::new(false);
 
     assert_eq!(
-        decode_frames(&frames, None, |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Err(Error {
             offset: 16,
             reason: PartialFrame(15)
@@ -31,19 +57,19 @@ fn partial_frame() {
     let mut expected = HashMap::new();
     expected.insert(None, vec![0; 15]);
 
-    assert_eq!(map, expected);
+    assert_eq!(recorder.data, expected);
 }
 
 // Put an invalid id within the stream:
 #[test]
 fn bad_id() {
     let mut frames = [0; 32];
-    let mut map = HashMap::new();
+    let mut recorder = Recorder::new(false);
 
     frames[0] = 0x03;
     frames[16] = 0xFF;
     assert_eq!(
-        decode_frames(&frames, None, |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Err(Error {
             offset: 16,
             reason: InvalidStreamId(0x7F)
@@ -53,28 +79,19 @@ fn bad_id() {
     let mut expected = HashMap::new();
     expected.insert(Some(1), vec![0; 14]);
 
-    assert_eq!(map, expected);
+    assert_eq!(recorder.data, expected);
 }
 
 // Put an invalid id within the stream (continue on)
 #[test]
 fn bad_id_continue() {
     let mut frames = [0; 32];
-    let mut map = HashMap::new();
-    let mut errors = Vec::new();
+    let mut recorder = Recorder::new(true);
 
     frames[0] = 0x03;
     frames[16] = 0xFF;
     assert_eq!(
-        decode_frames(
-            &frames,
-            None,
-            |id, data| map.save(id, data),
-            |e| {
-                errors.push(e);
-                Ok(())
-            }
-        ),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Ok(Some(127))
     );
 
@@ -82,24 +99,30 @@ fn bad_id_continue() {
     expected.insert(Some(1), vec![0; 14]);
     expected.insert(Some(0x7F), vec![0; 14]);
 
-    assert_eq!(map, expected);
+    assert_eq!(recorder.data, expected);
+
+    let errors = vec![Error {
+        offset: 16,
+        reason: InvalidStreamId(0x7F),
+    }];
+    assert_eq!(recorder.errors.unwrap(), errors);
 }
 
 // Two frames of data with an unknown stream id:
 #[test]
 fn unknown_id() {
-    let frame = [0; 32];
-    let mut map = HashMap::new();
+    let frames = [0; 32];
+    let mut recorder = Recorder::new(false);
 
     assert_eq!(
-        decode_frames(&frame, None, |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Ok(None)
     );
 
     let mut expected = HashMap::new();
     expected.insert(None, vec![0; 30]);
 
-    assert_eq!(map, expected);
+    assert_eq!(recorder.data, expected);
 }
 
 // Test an immediate stream change
@@ -111,10 +134,10 @@ fn immediate_change() {
         .immediate_id(2)
         .data_span(12, 2)
         .build();
-    let mut map = HashMap::new();
+    let mut recorder = Recorder::new(false);
 
     assert_eq!(
-        decode_frames(&frames, None, |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Ok(Some(2))
     );
 
@@ -122,7 +145,7 @@ fn immediate_change() {
     expected.insert(Some(1), vec![1]);
     expected.insert(Some(2), vec![2; 12]);
 
-    assert_eq!(map, expected);
+    assert_eq!(recorder.data, expected);
 }
 
 // Test a delayed stream change
@@ -137,10 +160,10 @@ fn delayed_change() {
         .data(4)
         .data_span(20, 5)
         .build();
-    let mut map = HashMap::new();
+    let mut recorder = Recorder::new(false);
 
     assert_eq!(
-        decode_frames(&frames, None, |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Ok(Some(5))
     );
 
@@ -149,7 +172,7 @@ fn delayed_change() {
     exp.insert(Some(4), vec![4; 5]);
     exp.insert(Some(5), vec![5; 20]);
 
-    assert_eq!(map, exp);
+    assert_eq!(recorder.data, exp);
 }
 
 // A delayed switch followed immediately by an immediate switch
@@ -162,10 +185,10 @@ fn delayed_and_immediate_change() {
         .immediate_id(5)
         .data_span(10, 5)
         .build();
-    let mut map = HashMap::new();
+    let mut recorder = Recorder::new(false);
 
     assert_eq!(
-        decode_frames(&frames, None, |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, None, |d| recorder.record(d)),
         Ok(Some(5))
     );
 
@@ -173,20 +196,20 @@ fn delayed_and_immediate_change() {
     exp.insert(None, vec![1; 3]);
     exp.insert(Some(5), vec![5; 10]);
 
-    assert_eq!(map, exp);
+    assert_eq!(recorder.data, exp);
 }
 
 // Put a delayed id switch in an invalid position:
 #[test]
 fn invalid_aux_byte() {
     let mut frames = [0; 32];
-    let mut map = HashMap::new();
+    let mut recorder = Recorder::new(false);
 
     frames[30] = 0x03;
     frames[31] = 0x80;
 
     assert_eq!(
-        decode_frames(&frames, Some(1), |id, data| map.save(id, data), |e| Err(e)),
+        decode_frames(&frames, Some(1), |d| recorder.record(d)),
         Err(Error {
             offset: 31,
             reason: InvalidAuxByte(0x80)
@@ -196,34 +219,25 @@ fn invalid_aux_byte() {
     let mut exp = HashMap::new();
     exp.insert(Some(1), vec![0; 15]);
 
-    assert_eq!(map, exp);
+    assert_eq!(recorder.data, exp);
 }
 
 // Put a delayed id switch in an invalid position:
 #[test]
 fn invalid_aux_byte_continue() {
     let mut frames = [0; 32];
-    let mut map = HashMap::new();
-    let mut errors = Vec::new();
+    let mut recorder = Recorder::new(true);
 
     frames[30] = 0x05;
     frames[31] = 0x80;
 
     assert_eq!(
-        decode_frames(
-            &frames,
-            Some(1),
-            |id, data| map.save(id, data),
-            |e| {
-                errors.push(e);
-                Ok(())
-            }
-        ),
+        decode_frames(&frames, Some(1), |d| recorder.record(d)),
         Ok(Some(2))
     );
 
     let mut exp = HashMap::new();
     exp.insert(Some(1), vec![0; 29]);
 
-    assert_eq!(map, exp);
+    assert_eq!(recorder.data, exp);
 }
