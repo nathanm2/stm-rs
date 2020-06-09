@@ -130,3 +130,30 @@ where
 
     Ok(cur_stream)
 }
+
+pub struct FrameDecoder {
+    frame: [u8; 16],
+    frame_idx: usize,
+    fsync_idx: usize,
+    aligned: bool,
+    stream_id: Option<u8>,
+}
+
+impl FrameDecoder {
+    pub fn new(aligned: bool, stream_id: Option<u8>) -> FrameDecoder {
+        FrameDecoder {
+            frame: [0; 16],
+            frame_idx: 0,
+            fsync_idx: 0,
+            aligned,
+            stream_id,
+        }
+    }
+
+    pub fn decode<H>(frame: &[u8], mut handler: H) -> Result
+    where
+        H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
+    {
+        Ok(None)
+    }
+}
