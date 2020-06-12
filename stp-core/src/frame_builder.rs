@@ -75,7 +75,7 @@ pub struct FrameBuilder {
 impl FrameBuilder {
     pub fn new(capacity: usize) -> FrameBuilder {
         FrameBuilder {
-            frames: Vec::<u8>::with_capacity(capacity),
+            frames: Vec::<u8>::with_capacity(capacity * 16),
             offset: 0,
             last_op: LastOp::None,
         }
@@ -167,5 +167,19 @@ impl FrameBuilder {
 
     pub fn build(self) -> Vec<u8> {
         self.frames
+    }
+}
+
+const FSYNC: [u8; 4] = [0x7F, 0xFF, 0xFF, 0xFF];
+
+pub fn insert_fsync(frames: &mut Vec<u8>, offset: usize) -> Result {
+    if offset >= frames.len() {
+        Err(InvalidOffset(offset))
+    } else {
+        frames.reserve(4);
+        let mut v = frames.split_off(offset);
+        frames.extend_from_slice(&FSYNC);
+        frames.append(&mut v);
+        Ok(())
     }
 }

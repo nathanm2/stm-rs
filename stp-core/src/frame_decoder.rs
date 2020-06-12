@@ -35,15 +35,17 @@ impl fmt::Display for Error {
     }
 }
 
-pub type Result = result::Result<Option<u8>, Error>;
-
 /// Decode a series of frames.
 ///
 /// # Arguments
 ///
 ///  * `frames` - A stream of bytes representing contiguous 16 byte frames.
 ///  * `stream_id` - The starting stream ID.
-pub fn decode_frames<H>(frames: &[u8], stream_id: Option<u8>, mut handler: H) -> Result
+pub fn decode_frames<H>(
+    frames: &[u8],
+    stream_id: Option<u8>,
+    mut handler: H,
+) -> result::Result<Option<u8>, Error>
 where
     H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
 {
@@ -78,7 +80,11 @@ where
 ///
 ///  * `frame` - The frame of data to be decoded.
 ///  * `stream` - The starting stream ID.
-pub fn decode_frame<H>(frame: &[u8; 16], stream_id: Option<u8>, mut handler: H) -> Result
+pub fn decode_frame<H>(
+    frame: &[u8; 16],
+    stream_id: Option<u8>,
+    mut handler: H,
+) -> result::Result<Option<u8>, Error>
 where
     H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
 {
@@ -139,6 +145,8 @@ pub struct FrameDecoder {
     stream_id: Option<u8>,
 }
 
+const FSYNC: [u8; 4] = [0x7F, 0xFF, 0xFF, 0xFF];
+
 impl FrameDecoder {
     pub fn new(aligned: bool, stream_id: Option<u8>) -> FrameDecoder {
         FrameDecoder {
@@ -150,10 +158,49 @@ impl FrameDecoder {
         }
     }
 
-    pub fn decode<H>(frame: &[u8], mut handler: H) -> Result
+    pub fn decode<H>(&mut self, data: &[u8], mut handler: H) -> result::Result<(), Error>
     where
         H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
     {
-        Ok(None)
+        for (o, d) in data.iter().enumerate() {
+            if *d == FSYNC[self.fsync_idx] {
+                self.fsync_idx += 1;
+                if self.fsync_idx == FSYNC.len() {
+                    self.aligned = true;
+                    self.fsync_idx = 0;
+                    self.frame_idx = 0;
+                }
+            } else if self.aligned {
+                for i in 0..self.fsync_idx {
+                    self.process_byte(o - (self.fsync_idx - i), FSYNC[i], &mut handler)?;
+                }
+                self.fsync_idx = 0;
+                self.process_byte(o, *d, &mut handler)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn process_byte<H>(
+        &mut self,
+        offset: usize,
+        byte: u8,
+        mut handler: H,
+    ) -> result::Result<(), Error>
+    where
+        H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
+    {
+        self.frame[self.frame_idx] = byte;
+        self.frame_idx += 1;
+        if self.frame_idx == self.frame.len() {
+            self.stream_id = decode_frame(&self.frame, self.stream_id, |mut r| {
+                if let Err(ref mut e) = r {
+                    e.offset += offset - 16;
+                }
+                handler(r)
+            })?;
+            self.frame_idx = 0;
+        }
+        Ok(())
     }
 }

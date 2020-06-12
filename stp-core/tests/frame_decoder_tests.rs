@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::result;
 use stp_core::frame_builder::*;
-use stp_core::frame_decoder::{decode_frames, Error, ErrorReason::*};
+use stp_core::frame_decoder::{decode_frames, Error, ErrorReason::*, FrameDecoder};
 
 struct Recorder {
     data: HashMap<Option<u8>, Vec<u8>>,
@@ -238,6 +238,68 @@ fn invalid_aux_byte_continue() {
 
     let mut exp = HashMap::new();
     exp.insert(Some(1), vec![0; 29]);
+
+    assert_eq!(recorder.data, exp);
+}
+
+// Stop when stream id 2 is seen:
+#[test]
+fn stop_test() {
+    let frames = FrameBuilder::new(1)
+        .id(1)
+        .data_span(10, 100)
+        .id(2)
+        .data_span(10, 200)
+        .build();
+    let mut recorder = Recorder::new(false);
+
+    assert_eq!(
+        decode_frames(&frames, None, |d| {
+            match d {
+                Ok((Some(id), _)) if id == 2 => Err(Error {
+                    offset: 0,
+                    reason: Stop,
+                }),
+                x => recorder.record(x),
+            }
+        }),
+        Err(Error {
+            offset: 0,
+            reason: Stop
+        })
+    );
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(1), vec![100; 10]);
+
+    assert_eq!(recorder.data, exp);
+}
+
+// Two unsynchronized frames:
+#[test]
+fn unsynced_frames() {
+    let frames = FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build();
+    let mut decoder = FrameDecoder::new(false, None);
+    let mut recorder = Recorder::new(true);
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+
+    assert_eq!(recorder.data.is_empty(), true);
+}
+
+// An FSYNC followed by two frames worth of data.
+#[test]
+fn synced_frames() {
+    let mut frames = FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build();
+    let mut decoder = FrameDecoder::new(false, None);
+    let mut recorder = Recorder::new(true);
+
+    insert_fsync(&mut frames, 0).unwrap();
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(1), vec![1; 14 + 15]);
 
     assert_eq!(recorder.data, exp);
 }
