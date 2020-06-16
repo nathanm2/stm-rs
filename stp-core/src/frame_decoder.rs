@@ -143,6 +143,7 @@ pub struct FrameDecoder {
     fsync_idx: usize,
     aligned: bool,
     stream_id: Option<u8>,
+    offset: usize,
 }
 
 const FSYNC: [u8; 4] = [0x7F, 0xFF, 0xFF, 0xFF];
@@ -155,6 +156,7 @@ impl FrameDecoder {
             fsync_idx: 0,
             aligned,
             stream_id,
+            offset: 0,
         }
     }
 
@@ -162,44 +164,48 @@ impl FrameDecoder {
     where
         H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
     {
-        for (o, d) in data.iter().enumerate() {
+        for d in data {
             if *d == FSYNC[self.fsync_idx] {
                 self.fsync_idx += 1;
                 if self.fsync_idx == FSYNC.len() {
-                    self.aligned = true;
                     self.fsync_idx = 0;
+                    self.aligned = true;
+                    if self.frame_idx > 0 {
+                        handler(Err(Error {
+                            offset: self.offset,
+                            reason: PartialFrame(self.frame_idx),
+                        }))?;
+                    }
                     self.frame_idx = 0;
+                    self.offset += FSYNC.len();
                 }
             } else if self.aligned {
                 for i in 0..self.fsync_idx {
-                    self.process_byte(o - (self.fsync_idx - i), FSYNC[i], &mut handler)?;
+                    self.process_byte(FSYNC[i], &mut handler)?;
                 }
                 self.fsync_idx = 0;
-                self.process_byte(o, *d, &mut handler)?;
+                self.process_byte(*d, &mut handler)?;
             }
         }
         Ok(())
     }
 
-    pub fn process_byte<H>(
-        &mut self,
-        offset: usize,
-        byte: u8,
-        mut handler: H,
-    ) -> result::Result<(), Error>
+    pub fn process_byte<H>(&mut self, byte: u8, mut handler: H) -> result::Result<(), Error>
     where
         H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
     {
         self.frame[self.frame_idx] = byte;
         self.frame_idx += 1;
         if self.frame_idx == self.frame.len() {
+            let offset = self.offset;
+            self.offset += self.frame.len();
+            self.frame_idx = 0;
             self.stream_id = decode_frame(&self.frame, self.stream_id, |mut r| {
                 if let Err(ref mut e) = r {
-                    e.offset += offset - 16;
+                    e.offset += offset;
                 }
                 handler(r)
             })?;
-            self.frame_idx = 0;
         }
         Ok(())
     }
