@@ -13,7 +13,7 @@ use FrameBuilderError::*;
 pub type Result = result::Result<(), FrameBuilderError>;
 
 pub fn set_stream_id(frames: &mut [u8], offset: usize, id: u8, immediate: bool) -> Result {
-    if offset % 2 != 0 || offset % 16 == 15 {
+    if offset % 2 != 0 || offset >= frames.len() {
         return Err(InvalidOffset(offset));
     }
 
@@ -25,7 +25,7 @@ pub fn set_stream_id(frames: &mut [u8], offset: usize, id: u8, immediate: bool) 
         return Err(InvalidDelayedId(offset, id));
     }
 
-    let aux_offset = (offset / 16) + 15;
+    let aux_offset = (offset / 16) * 16 + 15;
     frames[offset] = id << 1 | 0x01;
 
     let mask = 0x01 << ((offset % 16) / 2);
@@ -39,7 +39,7 @@ pub fn set_stream_id(frames: &mut [u8], offset: usize, id: u8, immediate: bool) 
 }
 
 pub fn set_stream_data(frames: &mut [u8], offset: usize, data: u8) -> Result {
-    if offset % 16 == 15 {
+    if offset % 16 == 15 || offset >= frames.len() {
         return Err(InvalidOffset(offset));
     }
 
