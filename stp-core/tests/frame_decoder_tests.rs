@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::result;
 use stp_core::frame_builder::*;
-use stp_core::frame_decoder::{decode_frames, Error, ErrorReason::*, FrameDecoder};
+use stp_core::frame_decoder::{decode_frames, Data, Error, ErrorReason::*, FrameDecoder, FSYNC};
 
 struct Recorder {
     data: HashMap<Option<u8>, Vec<u8>>,
@@ -20,13 +20,13 @@ impl Recorder {
         }
     }
 
-    fn record(&mut self, r: result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error> {
+    fn record(&mut self, r: result::Result<Data, Error>) -> result::Result<(), Error> {
         match r {
-            Ok((id, data)) => {
+            Ok(d) => {
                 self.data
-                    .entry(id)
-                    .and_modify(|v| v.push(data))
-                    .or_insert(vec![data]);
+                    .entry(d.id)
+                    .and_modify(|v| v.push(d.data))
+                    .or_insert(vec![d.data]);
                 Ok(())
             }
             Err(e) => match &mut self.errors {
@@ -247,7 +247,7 @@ fn invalid_aux_byte_continue() {
 fn stop_test() {
     let frames = FrameBuilder::new(1)
         .id(1)
-        .data_span(10, 100)
+        .data_span(16, 100)
         .id(2)
         .data_span(10, 200)
         .build();
@@ -256,21 +256,21 @@ fn stop_test() {
     assert_eq!(
         decode_frames(&frames, None, |d| {
             match d {
-                Ok((Some(id), _)) if id == 2 => Err(Error {
-                    offset: 0,
+                Ok(data) if data.id == Some(2) => Err(Error {
+                    offset: data.offset,
                     reason: Stop,
                 }),
                 x => recorder.record(x),
             }
         }),
         Err(Error {
-            offset: 0,
+            offset: 19,
             reason: Stop
         })
     );
 
     let mut exp = HashMap::new();
-    exp.insert(Some(1), vec![100; 10]);
+    exp.insert(Some(1), vec![100; 16]);
 
     assert_eq!(recorder.data, exp);
 }
@@ -290,16 +290,48 @@ fn unsynced_frames() {
 // An FSYNC followed by two frames worth of data.
 #[test]
 fn synced_frames() {
-    let mut frames = FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build();
     let mut decoder = FrameDecoder::new(false, None);
     let mut recorder = Recorder::new(true);
-
-    insert_fsync(&mut frames, 0).unwrap();
+    let mut frames = FSYNC.to_vec();
+    frames.extend(FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build());
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
     exp.insert(Some(1), vec![1; 14 + 15]);
+
+    assert_eq!(recorder.data, exp);
+}
+
+// An ignored frame + FSYNC + decoded frame.
+#[test]
+fn ignored_frame() {
+    let mut decoder = FrameDecoder::new(false, None);
+    let mut recorder = Recorder::new(true);
+    let mut frames = FrameBuilder::new(1).id(1).data_span(14, 1).build();
+
+    frames.extend_from_slice(&FSYNC);
+    frames.extend(FrameBuilder::new(1).id(2).data_span(14, 2).build());
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(2), vec![2; 14]);
+
+    assert_eq!(recorder.data, exp);
+}
+
+// Sync'd from the outset:
+#[test]
+fn initially_synced() {
+    let mut decoder = FrameDecoder::new(true, None);
+    let mut recorder = Recorder::new(true);
+    let mut frames = FrameBuilder::new(2).id(2).data_span(14 + 15, 2).build();
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(2), vec![2; 14 + 15]);
 
     assert_eq!(recorder.data, exp);
 }

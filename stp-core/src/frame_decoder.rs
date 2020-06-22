@@ -31,8 +31,14 @@ pub struct Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} ({})", self.reason, self.offset)
+        write!(f, "{}, offset: {}", self.reason, self.offset)
     }
+}
+
+pub struct Data {
+    pub id: Option<u8>,
+    pub data: u8,
+    pub offset: usize,
 }
 
 /// Decode a series of frames.
@@ -47,19 +53,14 @@ pub fn decode_frames<H>(
     mut handler: H,
 ) -> result::Result<Option<u8>, Error>
 where
-    H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
+    H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
 {
     let mut id = stream_id;
     let mut offset = 0;
     let mut iter = frames.chunks_exact(16);
 
     for frame in &mut iter {
-        id = decode_frame(frame.try_into().unwrap(), id, |mut r| {
-            if let Err(ref mut e) = r {
-                e.offset += offset;
-            }
-            handler(r)
-        })?;
+        id = decode_frame_offset(frame.try_into().unwrap(), id, &mut handler, offset)?;
         offset += 16;
     }
 
@@ -86,7 +87,7 @@ pub fn decode_frame<H>(
     mut handler: H,
 ) -> result::Result<Option<u8>, Error>
 where
-    H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
+    H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
 {
     let mut aux_byte = frame[15];
 
@@ -122,11 +123,19 @@ where
                     cur_stream = Some(byte >> 1);
                 }
             } else {
-                handler(Ok((cur_stream, byte | aux_bit)))?;
+                handler(Ok(Data {
+                    id: cur_stream,
+                    data: byte | aux_bit,
+                    offset: i,
+                }))?;
             }
         } else {
             // Odd byte: Data only.
-            handler(Ok((cur_stream, *byte)))?;
+            handler(Ok(Data {
+                id: cur_stream,
+                data: *byte,
+                offset: i,
+            }))?;
             if let Some(_) = next_stream {
                 cur_stream = next_stream;
                 next_stream = None;
@@ -135,6 +144,24 @@ where
     }
 
     Ok(cur_stream)
+}
+
+pub fn decode_frame_offset<H>(
+    frame: &[u8; 16],
+    stream_id: Option<u8>,
+    mut handler: H,
+    offset: usize,
+) -> result::Result<Option<u8>, Error>
+where
+    H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
+{
+    decode_frame(frame, stream_id, |mut r| {
+        match r {
+            Err(ref mut e) => e.offset += offset,
+            Ok(ref mut d) => d.offset += offset,
+        }
+        handler(r)
+    })
 }
 
 pub struct FrameDecoder {
@@ -146,7 +173,7 @@ pub struct FrameDecoder {
     offset: usize,
 }
 
-const FSYNC: [u8; 4] = [0x7F, 0xFF, 0xFF, 0xFF];
+pub const FSYNC: [u8; 4] = [0x7F, 0xFF, 0xFF, 0xFF];
 
 impl FrameDecoder {
     pub fn new(aligned: bool, stream_id: Option<u8>) -> FrameDecoder {
@@ -162,7 +189,7 @@ impl FrameDecoder {
 
     pub fn decode<H>(&mut self, data: &[u8], mut handler: H) -> result::Result<(), Error>
     where
-        H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
+        H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
     {
         for d in data {
             if *d == FSYNC[self.fsync_idx] {
@@ -192,7 +219,7 @@ impl FrameDecoder {
 
     pub fn process_byte<H>(&mut self, byte: u8, mut handler: H) -> result::Result<(), Error>
     where
-        H: FnMut(result::Result<(Option<u8>, u8), Error>) -> result::Result<(), Error>,
+        H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
     {
         self.frame[self.frame_idx] = byte;
         self.frame_idx += 1;
@@ -200,12 +227,8 @@ impl FrameDecoder {
             let offset = self.offset;
             self.offset += self.frame.len();
             self.frame_idx = 0;
-            self.stream_id = decode_frame(&self.frame, self.stream_id, |mut r| {
-                if let Err(ref mut e) = r {
-                    e.offset += offset;
-                }
-                handler(r)
-            })?;
+            self.stream_id =
+                decode_frame_offset(&self.frame, self.stream_id, &mut handler, offset)?;
         }
         Ok(())
     }
