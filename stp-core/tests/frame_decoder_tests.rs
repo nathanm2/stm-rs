@@ -280,9 +280,10 @@ fn stop_test() {
 fn unsynced_frames() {
     let frames = FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build();
     let mut decoder = FrameDecoder::new(false, None);
-    let mut recorder = Recorder::new(true);
+    let mut recorder = Recorder::new(false);
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     assert_eq!(recorder.data.is_empty(), true);
 }
@@ -291,11 +292,12 @@ fn unsynced_frames() {
 #[test]
 fn synced_frames() {
     let mut decoder = FrameDecoder::new(false, None);
-    let mut recorder = Recorder::new(true);
+    let mut recorder = Recorder::new(false);
     let mut frames = FSYNC.to_vec();
     frames.extend(FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build());
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
     exp.insert(Some(1), vec![1; 14 + 15]);
@@ -307,13 +309,40 @@ fn synced_frames() {
 #[test]
 fn ignored_frame() {
     let mut decoder = FrameDecoder::new(false, None);
-    let mut recorder = Recorder::new(true);
+    let mut recorder = Recorder::new(false);
     let mut frames = FrameBuilder::new(1).id(1).data_span(14, 1).build();
 
     frames.extend_from_slice(&FSYNC);
     frames.extend(FrameBuilder::new(1).id(2).data_span(14, 2).build());
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(2), vec![2; 14]);
+
+    assert_eq!(recorder.data, exp);
+}
+
+// Decode in 16 byte chunks and split the FSYNC across a chunk boundary.
+#[test]
+fn split_fsync() {
+    let mut decoder = FrameDecoder::new(false, None);
+    let mut recorder = Recorder::new(false);
+    let mut frames = vec![0; 14];
+
+    frames.extend_from_slice(&FSYNC);
+    frames.extend(FrameBuilder::new(1).id(2).data_span(14, 2).build());
+
+    assert_eq!(frames[14], 0xFF);
+    assert_eq!(frames[15], 0xFF);
+    assert_eq!(frames[16], 0xFF);
+    assert_eq!(frames[17], 0x7F);
+
+    for frame in frames.chunks(16) {
+        assert_eq!(decoder.decode(frame, |d| recorder.record(d)), Ok(()));
+    }
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
     exp.insert(Some(2), vec![2; 14]);
@@ -325,13 +354,73 @@ fn ignored_frame() {
 #[test]
 fn initially_synced() {
     let mut decoder = FrameDecoder::new(true, None);
-    let mut recorder = Recorder::new(true);
-    let mut frames = FrameBuilder::new(2).id(2).data_span(14 + 15, 2).build();
+    let mut recorder = Recorder::new(false);
+    let frames = FrameBuilder::new(2).id(2).data_span(14 + 15, 2).build();
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
     exp.insert(Some(2), vec![2; 14 + 15]);
+
+    assert_eq!(recorder.data, exp);
+}
+
+// Truncate a frame with an FSYNC.
+#[test]
+fn truncated_frame() {
+    let mut decoder = FrameDecoder::new(true, None); // Sync'd from the outset.
+    let mut recorder = Recorder::new(true);
+    let mut frames = FrameBuilder::new(2)
+        .id(1)
+        .data_span(14, 1)
+        .id(2)
+        .data_span(14, 2)
+        .build();
+
+    frames[12] = FSYNC[0];
+    frames[13] = FSYNC[1];
+    frames[14] = FSYNC[2];
+    frames[15] = FSYNC[3];
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(2), vec![2; 14]);
+
+    assert_eq!(recorder.data, exp);
+
+    let errors = vec![Error {
+        offset: 0,
+        reason: PartialFrame(11),
+    }];
+
+    assert_eq!(recorder.errors.unwrap(), errors);
+}
+
+// Truncate an FSYNC:
+#[test]
+fn truncated_fsync() {
+    let mut decoder = FrameDecoder::new(true, Some(4)); // Sync'd from the outset.
+    let mut recorder = Recorder::new(false);
+    let mut frames = FrameBuilder::new(2)
+        .data(0)
+        .id(1)
+        .data_span(13 + 15, 1)
+        .build();
+
+    assert_eq!(frames[15], 0xFF);
+    assert_eq!(frames[31], 0xFF);
+
+    frames[30] = 0xFF;
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(4), vec![0]);
+    exp.insert(Some(1), vec![1; 13]);
 
     assert_eq!(recorder.data, exp);
 }

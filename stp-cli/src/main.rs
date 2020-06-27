@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, prelude::*, ErrorKind};
 use std::result;
-use stp_core::frame_decoder::{self, decode_frames};
+use stp_core::frame_decoder::{self, FrameDecoder};
 
 const PROG_NAME: &str = crate_name!();
 
@@ -26,8 +26,8 @@ fn run() -> Result {
         (version: crate_version!())
         (author: crate_authors!())
         (about: crate_description!())
-        (@subcommand streams =>
-            (about: "Displays the Trace Data streams")
+        (@subcommand nibbles =>
+            (about: "Displays the Trace Data nibbles")
             (@arg FILE: "STP file")
         )
         (@subcommand packets =>
@@ -38,7 +38,7 @@ fn run() -> Result {
     .get_matches();
 
     match app_m.subcommand() {
-        ("streams", Some(sub_m)) => streams(&app_m, sub_m),
+        ("nibbles", Some(sub_m)) => nibbles(&app_m, sub_m),
         ("packets", Some(sub_m)) => packets(&app_m, sub_m),
         _ => {
             println!("{}", app_m.usage());
@@ -65,55 +65,44 @@ impl std::convert::From<frame_decoder::Error> for CliError {
     }
 }
 
-fn streams(_app_m: &ArgMatches, sub_m: &ArgMatches) -> Result {
+fn nibbles(_app_m: &ArgMatches, sub_m: &ArgMatches) -> Result {
     let mut input = get_input(sub_m)?;
     let mut buf = [0; BUF_SIZE];
-    let mut total = 0;
-    let mut stream_id = None;
-    let mut display = StreamDisplay::new();
+    let mut display = NibbleDisplay::new();
+    let mut decoder = FrameDecoder::new(false, None);
 
     loop {
-        let len = match input.read(&mut buf) {
-            Ok(0) => return Ok(()),
-            Ok(len) => len,
+        match input.read(&mut buf) {
+            Ok(0) => decoder.finish(|r| display.display(r))?,
+            Ok(len) => decoder.decode(&buf[..len], |r| display.display(r))?,
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(CliError(format!("{}", e))),
         };
-        stream_id = decode_frames(
-            &buf[..len],
-            stream_id,
-            |id, data| display.display(id, data),
-            |mut e| {
-                e.offset += total;
-                Err(e)
-            },
-        )?;
-        total += len;
     }
 }
 
-struct StreamDisplay {
+struct NibbleDisplay {
     offsets: HashMap<Option<u8>, usize>,
     cur_id: Option<u8>,
     cur_offset: usize,
-    col: usize,
+    column: usize,
 }
 
-impl StreamDisplay {
-    fn new() -> StreamDisplay {
-        StreamDisplay {
+impl NibbleDisplay {
+    fn new() -> NibbleDisplay {
+        NibbleDisplay {
             offsets: HashMap::new(),
             cur_id: Some(0xFF), // Intentionally set to an invalid Stream ID.
             cur_offset: 0,
-            col: 0,
+            column: 0,
         }
     }
 
-    fn display(&mut self, id: Option<u8>, data: u8) {
+    fn display_data(&mut self, id: Option<u8>, data: u8) {
         if id != self.cur_id {
             self.offsets.insert(self.cur_id, self.cur_offset);
             self.cur_offset = *self.offsets.entry(id).or_insert(0);
-            self.col = 0;
+            self.column = 0;
             self.cur_id = id;
             match id {
                 None => print!("\n\nStream None:"),
@@ -121,16 +110,32 @@ impl StreamDisplay {
             }
         }
 
-        if self.col % 16 == 0 {
+        if self.column % 16 == 0 {
             print!("\n{:012X} |", self.cur_offset * 2);
-            self.col = 0;
-        } else if self.col == 8 {
+            self.column = 0;
+        } else if self.column == 8 {
             print!(" ");
         }
         print!(" {:x} {:x}", data & 0xF, data >> 4);
 
-        self.col += 1;
+        self.column += 1;
         self.cur_offset += 1;
+    }
+
+    fn display(
+        &mut self,
+        r: frame_decoder::Result<frame_decoder::Data>,
+    ) -> frame_decoder::Result<()> {
+        match r {
+            Ok(d) => {
+                self.display_data(d.id, d.data);
+                Ok(())
+            }
+            Err(e) => {
+                println!("{}: {}", PROG_NAME, e);
+                Ok(())
+            }
+        }
     }
 }
 

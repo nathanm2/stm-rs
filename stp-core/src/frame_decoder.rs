@@ -41,19 +41,17 @@ pub struct Data {
     pub offset: usize,
 }
 
+pub type Result<S> = result::Result<S, Error>;
+
 /// Decode a series of frames.
 ///
 /// # Arguments
 ///
 ///  * `frames` - A stream of bytes representing contiguous 16 byte frames.
 ///  * `stream_id` - The starting stream ID.
-pub fn decode_frames<H>(
-    frames: &[u8],
-    stream_id: Option<u8>,
-    mut handler: H,
-) -> result::Result<Option<u8>, Error>
+pub fn decode_frames<H>(frames: &[u8], stream_id: Option<u8>, mut handler: H) -> Result<Option<u8>>
 where
-    H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
+    H: FnMut(Result<Data>) -> Result<()>,
 {
     let mut id = stream_id;
     let mut offset = 0;
@@ -85,9 +83,9 @@ pub fn decode_frame<H>(
     frame: &[u8; 16],
     stream_id: Option<u8>,
     mut handler: H,
-) -> result::Result<Option<u8>, Error>
+) -> Result<Option<u8>>
 where
-    H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
+    H: FnMut(Result<Data>) -> Result<()>,
 {
     let mut aux_byte = frame[15];
 
@@ -151,9 +149,9 @@ pub fn decode_frame_offset<H>(
     stream_id: Option<u8>,
     mut handler: H,
     offset: usize,
-) -> result::Result<Option<u8>, Error>
+) -> Result<Option<u8>>
 where
-    H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
+    H: FnMut(Result<Data>) -> Result<()>,
 {
     decode_frame(frame, stream_id, |mut r| {
         match r {
@@ -173,7 +171,7 @@ pub struct FrameDecoder {
     offset: usize,
 }
 
-pub const FSYNC: [u8; 4] = [0x7F, 0xFF, 0xFF, 0xFF];
+pub const FSYNC: [u8; 4] = [0xFF, 0xFF, 0xFF, 0x7F];
 
 impl FrameDecoder {
     pub fn new(aligned: bool, stream_id: Option<u8>) -> FrameDecoder {
@@ -187,9 +185,9 @@ impl FrameDecoder {
         }
     }
 
-    pub fn decode<H>(&mut self, data: &[u8], mut handler: H) -> result::Result<(), Error>
+    pub fn decode<H>(&mut self, data: &[u8], mut handler: H) -> Result<()>
     where
-        H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
+        H: FnMut(Result<Data>) -> Result<()>,
     {
         for d in data {
             if *d == FSYNC[self.fsync_idx] {
@@ -200,7 +198,7 @@ impl FrameDecoder {
                     if self.frame_idx > 0 {
                         handler(Err(Error {
                             offset: self.offset,
-                            reason: PartialFrame(self.frame_idx),
+                            reason: PartialFrame(self.frame_idx - 1),
                         }))?;
                     }
                     self.frame_idx = 0;
@@ -217,9 +215,22 @@ impl FrameDecoder {
         Ok(())
     }
 
-    pub fn process_byte<H>(&mut self, byte: u8, mut handler: H) -> result::Result<(), Error>
+    pub fn finish<H>(&mut self, mut handler: H) -> Result<()>
     where
-        H: FnMut(result::Result<Data, Error>) -> result::Result<(), Error>,
+        H: FnMut(Result<Data>) -> Result<()>,
+    {
+        // Only take action if the AUX byte is 0xFF.  In all other cases we're dealing with a
+        // partial frame or a truncated FSYNC
+        if self.fsync_idx == 1 && self.frame_idx == 15 {
+            self.process_byte(FSYNC[0], &mut handler)?;
+            self.fsync_idx = 0;
+        }
+        Ok(())
+    }
+
+    fn process_byte<H>(&mut self, byte: u8, mut handler: H) -> Result<()>
+    where
+        H: FnMut(Result<Data>) -> Result<()>,
     {
         self.frame[self.frame_idx] = byte;
         self.frame_idx += 1;
