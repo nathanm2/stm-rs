@@ -27,11 +27,13 @@ fn run() -> Result {
         (author: crate_authors!())
         (about: crate_description!())
         (@subcommand nibbles =>
-            (about: "Displays the Trace Data nibbles")
+            (about: "Displays trace data as nibbles")
             (@arg FILE: "STP file")
+            (@arg bail: -b --bail "Stop on first error.")
+            (@arg file_offsets: --("file-offsets") "Display offsets relative to the file.")
         )
         (@subcommand packets =>
-            (about: "Displays the STP packets")
+            (about: "Displays STP packets")
             (@arg FILE: "STP file")
         )
     )
@@ -67,18 +69,23 @@ impl std::convert::From<frame_decoder::Error> for CliError {
 
 fn nibbles(_app_m: &ArgMatches, sub_m: &ArgMatches) -> Result {
     let mut input = get_input(sub_m)?;
+    let bail = sub_m.is_present("bail");
     let mut buf = [0; BUF_SIZE];
-    let mut display = NibbleDisplay::new();
+    let mut display = NibbleDisplay::new(bail);
     let mut decoder = FrameDecoder::new(false, None);
 
     loop {
         match input.read(&mut buf) {
-            Ok(0) => decoder.finish(|r| display.display(r))?,
+            Ok(0) => {
+                decoder.finish(|r| display.display(r))?;
+                break;
+            }
             Ok(len) => decoder.decode(&buf[..len], |r| display.display(r))?,
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(CliError(format!("{}", e))),
         };
     }
+    Ok(())
 }
 
 struct NibbleDisplay {
@@ -86,15 +93,17 @@ struct NibbleDisplay {
     cur_id: Option<u8>,
     cur_offset: usize,
     column: usize,
+    bail: bool,
 }
 
 impl NibbleDisplay {
-    fn new() -> NibbleDisplay {
+    fn new(bail: bool) -> NibbleDisplay {
         NibbleDisplay {
             offsets: HashMap::new(),
             cur_id: Some(0xFF), // Intentionally set to an invalid Stream ID.
             cur_offset: 0,
             column: 0,
+            bail,
         }
     }
 
@@ -132,8 +141,12 @@ impl NibbleDisplay {
                 Ok(())
             }
             Err(e) => {
-                println!("{}: {}", PROG_NAME, e);
-                Ok(())
+                if self.bail {
+                    Err(e)
+                } else {
+                    println!("{}: {}", PROG_NAME, e);
+                    Ok(())
+                }
             }
         }
     }
