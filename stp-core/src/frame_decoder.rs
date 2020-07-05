@@ -31,7 +31,7 @@ pub struct Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}, offset: {}", self.reason, self.offset)
+        write!(f, "{}, offset: {:#x}", self.reason, self.offset)
     }
 }
 
@@ -210,6 +210,8 @@ impl FrameDecoder {
                 }
                 self.fsync_idx = 0;
                 self.process_byte(*d, &mut handler)?;
+            } else {
+                self.offset += 1;
             }
         }
         Ok(())
