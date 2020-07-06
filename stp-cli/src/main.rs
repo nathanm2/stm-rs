@@ -2,6 +2,7 @@
 extern crate clap;
 
 use clap::ArgMatches;
+use colored::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, prelude::*, ErrorKind};
@@ -154,7 +155,8 @@ impl NibbleDisplay {
     }
 
     fn display_error(&mut self, err: frame_decoder::Error) {
-        print!("\n\n**{}\n", err);
+        let msg = format!("** {}", err);
+        print!("\n\n{}\n", msg.red().bold());
         self.column = 0;
     }
 

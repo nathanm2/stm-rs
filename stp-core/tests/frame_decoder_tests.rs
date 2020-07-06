@@ -5,7 +5,6 @@ use stp_core::frame_decoder::{decode_frames, Data, Error, ErrorReason::*, FrameD
 
 struct Recorder {
     data: HashMap<Option<u8>, Vec<u8>>,
-    offsets: HashMap<Option<u8>, Vec<usize>>,
     errors: Option<Vec<Error>>,
 }
 
@@ -28,10 +27,6 @@ impl Recorder {
                     .entry(d.id)
                     .and_modify(|v| v.push(d.data))
                     .or_insert(vec![d.data]);
-                self.offsets
-                    .entry(d.id)
-                    .and_modify(|v| v.push(d.offset))
-                    .or_insert(vec![d.offset]);
                 Ok(())
             }
             Err(e) => match &mut self.errors {

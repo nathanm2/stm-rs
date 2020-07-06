@@ -12,3 +12,4 @@ path = "src/main.rs"
 [dependencies]
 stp-core = { path = "../stp-core" }
 clap = "~2.33.1"
+colored = "~1.9.3"
