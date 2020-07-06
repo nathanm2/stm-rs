@@ -5,6 +5,7 @@ use stp_core::frame_decoder::{decode_frames, Data, Error, ErrorReason::*, FrameD
 
 struct Recorder {
     data: HashMap<Option<u8>, Vec<u8>>,
+    offsets: HashMap<Option<u8>, Vec<usize>>,
     errors: Option<Vec<Error>>,
 }
 
@@ -27,6 +28,10 @@ impl Recorder {
                     .entry(d.id)
                     .and_modify(|v| v.push(d.data))
                     .or_insert(vec![d.data]);
+                self.offsets
+                    .entry(d.id)
+                    .and_modify(|v| v.push(d.offset))
+                    .or_insert(vec![d.offset]);
                 Ok(())
             }
             Err(e) => match &mut self.errors {
@@ -292,7 +297,7 @@ fn unsynced_frames() {
 #[test]
 fn synced_frames() {
     let mut decoder = FrameDecoder::new(false, None);
-    let mut recorder = Recorder::new(false);
+    let mut recorder = OffsetRecorder::new(false);
     let mut frames = FSYNC.to_vec();
     frames.extend(FrameBuilder::new(2).id(1).data_span(14 + 15, 1).build());
 
@@ -301,15 +306,18 @@ fn synced_frames() {
 
     let mut exp = HashMap::new();
     exp.insert(Some(1), vec![1; 14 + 15]);
+    assert_eq!(recorder.r.data, exp);
 
-    assert_eq!(recorder.data, exp);
+    let mut exp_offsets = HashMap::new();
+    exp_offsets.insert(Some(1), (5..5 + 14).chain(20..20 + 15).collect());
+    assert_eq!(recorder.offsets, exp_offsets);
 }
 
 // An ignored frame + FSYNC + decoded frame.
 #[test]
 fn ignored_frame() {
     let mut decoder = FrameDecoder::new(false, None);
-    let mut recorder = Recorder::new(false);
+    let mut recorder = OffsetRecorder::new(false);
     let mut frames = FrameBuilder::new(1).id(1).data_span(14, 1).build();
 
     frames.extend_from_slice(&FSYNC);
@@ -320,15 +328,18 @@ fn ignored_frame() {
 
     let mut exp = HashMap::new();
     exp.insert(Some(2), vec![2; 14]);
+    assert_eq!(recorder.r.data, exp);
 
-    assert_eq!(recorder.data, exp);
+    let mut exp_offsets = HashMap::new();
+    exp_offsets.insert(Some(2), (21..21 + 14).collect());
+    assert_eq!(recorder.offsets, exp_offsets);
 }
 
 // Decode in 16 byte chunks and split the FSYNC across a chunk boundary.
 #[test]
 fn split_fsync() {
     let mut decoder = FrameDecoder::new(false, None);
-    let mut recorder = Recorder::new(false);
+    let mut recorder = OffsetRecorder::new(false);
     let mut frames = vec![0; 14];
 
     frames.extend_from_slice(&FSYNC);
@@ -346,15 +357,18 @@ fn split_fsync() {
 
     let mut exp = HashMap::new();
     exp.insert(Some(2), vec![2; 14]);
+    assert_eq!(recorder.r.data, exp);
 
-    assert_eq!(recorder.data, exp);
+    let mut exp_offsets = HashMap::new();
+    exp_offsets.insert(Some(2), (19..19 + 14).collect());
+    assert_eq!(recorder.offsets, exp_offsets);
 }
 
 // Sync'd from the outset:
 #[test]
 fn initially_synced() {
     let mut decoder = FrameDecoder::new(true, None);
-    let mut recorder = Recorder::new(false);
+    let mut recorder = OffsetRecorder::new(false);
     let frames = FrameBuilder::new(2).id(2).data_span(14 + 15, 2).build();
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
@@ -362,8 +376,11 @@ fn initially_synced() {
 
     let mut exp = HashMap::new();
     exp.insert(Some(2), vec![2; 14 + 15]);
+    assert_eq!(recorder.r.data, exp);
 
-    assert_eq!(recorder.data, exp);
+    let mut exp_offsets = HashMap::new();
+    exp_offsets.insert(Some(2), (1..15).chain(16..16 + 15).collect());
+    assert_eq!(recorder.offsets, exp_offsets);
 }
 
 // Truncate a frame with an FSYNC.
@@ -423,4 +440,28 @@ fn truncated_fsync() {
     exp.insert(Some(1), vec![1; 13]);
 
     assert_eq!(recorder.data, exp);
+}
+
+struct OffsetRecorder {
+    r: Recorder,
+    offsets: HashMap<Option<u8>, Vec<usize>>,
+}
+
+impl OffsetRecorder {
+    fn new(continue_on_error: bool) -> OffsetRecorder {
+        OffsetRecorder {
+            r: Recorder::new(continue_on_error),
+            offsets: HashMap::new(),
+        }
+    }
+
+    fn record(&mut self, r: result::Result<Data, Error>) -> result::Result<(), Error> {
+        if let Ok(ref d) = r {
+            self.offsets
+                .entry(d.id)
+                .and_modify(|v| v.push(d.offset))
+                .or_insert(vec![d.offset]);
+        };
+        self.r.record(r)
+    }
 }
