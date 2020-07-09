@@ -442,7 +442,7 @@ fn truncated_fsync() {
 fn aux_ff() {
     let mut decoder = FrameDecoder::new(true, None);
     let mut recorder = OffsetRecorder::new(false);
-    let mut frames = FrameBuilder::new(3).id(2).data_span(14, 2).build();
+    let mut frames = FrameBuilder::new(3).data(2).id(2).data_span(13, 1).build();
 
     frames.extend_from_slice(&FSYNC);
     frames.extend(FrameBuilder::new(1).id(4).data_span(14, 4).build());
@@ -457,7 +457,7 @@ fn aux_ff() {
     assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
-    exp.insert(Some(2), vec![2; 14]);
+    exp.insert(Some(2), vec![1; 14]);
     exp.insert(Some(4), vec![4; 14]);
     assert_eq!(recorder.r.data, exp);
 
