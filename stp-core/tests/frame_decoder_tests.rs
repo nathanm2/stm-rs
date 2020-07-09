@@ -437,6 +437,36 @@ fn truncated_fsync() {
     assert_eq!(recorder.data, exp);
 }
 
+// An AUX byte containing 0xFF, followed by an FSYNC:
+#[test]
+fn aux_ff() {
+    let mut decoder = FrameDecoder::new(true, None);
+    let mut recorder = OffsetRecorder::new(false);
+    let mut frames = FrameBuilder::new(3).id(2).data_span(14, 2).build();
+
+    frames.extend_from_slice(&FSYNC);
+    frames.extend(FrameBuilder::new(1).id(4).data_span(14, 4).build());
+
+    assert_eq!(frames[15], 0xFF);
+    assert_eq!(frames[16], 0xFF);
+    assert_eq!(frames[17], 0xFF);
+    assert_eq!(frames[18], 0xFF);
+    assert_eq!(frames[19], 0x7F);
+
+    assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
+    assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
+
+    let mut exp = HashMap::new();
+    exp.insert(Some(2), vec![2; 14]);
+    exp.insert(Some(4), vec![4; 14]);
+    assert_eq!(recorder.r.data, exp);
+
+    let mut exp_offsets = HashMap::new();
+    exp_offsets.insert(Some(2), (1..1 + 14).collect());
+    exp_offsets.insert(Some(4), (21..21 + 14).collect());
+    assert_eq!(recorder.offsets, exp_offsets);
+}
+
 struct OffsetRecorder {
     r: Recorder,
     offsets: HashMap<Option<u8>, Vec<usize>>,
