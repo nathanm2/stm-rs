@@ -382,33 +382,40 @@ fn initially_synced() {
 #[test]
 fn truncated_frame() {
     let mut decoder = FrameDecoder::new(true, None); // Sync'd from the outset.
-    let mut recorder = Recorder::new(true);
+    let mut recorder = OffsetRecorder::new(true);
     let mut frames = FrameBuilder::new(2)
         .id(1)
         .data_span(14, 1)
         .id(2)
         .data_span(14, 2)
+        .id(3)
+        .data_span(14, 3)
         .build();
 
-    frames[12] = FSYNC[0];
-    frames[13] = FSYNC[1];
-    frames[14] = FSYNC[2];
-    frames[15] = FSYNC[3];
+    frames[28] = FSYNC[0];
+    frames[29] = FSYNC[1];
+    frames[30] = FSYNC[2];
+    frames[31] = FSYNC[3];
 
     assert_eq!(decoder.decode(&frames, |d| recorder.record(d)), Ok(()));
     assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
-    exp.insert(Some(2), vec![2; 14]);
+    exp.insert(Some(1), vec![1; 14]);
+    exp.insert(Some(3), vec![3; 14]);
 
-    assert_eq!(recorder.data, exp);
+    assert_eq!(recorder.r.data, exp);
 
     let errors = vec![Error {
-        offset: 0,
-        reason: PartialFrame(11),
+        offset: 16,
+        reason: PartialFrame(12),
     }];
+    assert_eq!(recorder.r.errors.unwrap(), errors);
 
-    assert_eq!(recorder.errors.unwrap(), errors);
+    let mut exp_offsets = HashMap::new();
+    exp_offsets.insert(Some(1), (1..15).collect());
+    exp_offsets.insert(Some(3), (33..47).collect());
+    assert_eq!(recorder.offsets, exp_offsets);
 }
 
 // Truncate an FSYNC:
@@ -440,7 +447,7 @@ fn truncated_fsync() {
 // An AUX byte containing 0xFF, followed by an FSYNC:
 #[test]
 fn aux_ff() {
-    let mut decoder = FrameDecoder::new(true, None);
+    let mut decoder = FrameDecoder::new(true, Some(8));
     let mut recorder = OffsetRecorder::new(false);
     let mut frames = FrameBuilder::new(3).data(2).id(2).data_span(13, 1).build();
 
@@ -457,12 +464,17 @@ fn aux_ff() {
     assert_eq!(decoder.finish(|d| recorder.record(d)), Ok(()));
 
     let mut exp = HashMap::new();
-    exp.insert(Some(2), vec![1; 14]);
+    exp.insert(Some(8), vec![2]);
+    exp.insert(Some(2), vec![1; 13]);
     exp.insert(Some(4), vec![4; 14]);
     assert_eq!(recorder.r.data, exp);
 
     let mut exp_offsets = HashMap::new();
-    exp_offsets.insert(Some(2), (1..1 + 14).collect());
+
+    // Remember: the single data value for stream 8 is in the second byte not the first because of
+    // the deferred stream id change.
+    exp_offsets.insert(Some(8), (1..2).collect());
+    exp_offsets.insert(Some(2), (2..15).collect());
     exp_offsets.insert(Some(4), (21..21 + 14).collect());
     assert_eq!(recorder.offsets, exp_offsets);
 }

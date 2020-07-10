@@ -165,7 +165,7 @@ where
 pub struct FrameDecoder {
     frame: [u8; 16],
     frame_idx: usize,
-    fsync_idx: usize,
+    ff_count: usize,
     aligned: bool,
     stream_id: Option<u8>,
     offset: usize,
@@ -178,7 +178,7 @@ impl FrameDecoder {
         FrameDecoder {
             frame: [0; 16],
             frame_idx: 0,
-            fsync_idx: 0,
+            ff_count: 0,
             aligned,
             stream_id,
             offset: 0,
@@ -190,25 +190,26 @@ impl FrameDecoder {
         H: FnMut(Result<Data>) -> Result<()>,
     {
         for d in data {
-            if *d == FSYNC[self.fsync_idx] {
-                self.fsync_idx += 1;
-                if self.fsync_idx == FSYNC.len() {
-                    self.fsync_idx = 0;
-                    self.aligned = true;
-                    if self.frame_idx > 0 {
-                        handler(Err(Error {
-                            offset: self.offset,
-                            reason: PartialFrame(self.frame_idx - 1),
-                        }))?;
-                    }
-                    self.frame_idx = 0;
-                    self.offset += FSYNC.len();
+            if *d == 0xFF && self.ff_count < 3 {
+                self.ff_count += 1;
+            } else if *d == 0x7F && self.ff_count == 3 {
+                self.aligned = true;
+                if self.frame_idx > 0 {
+                    handler(Err(Error {
+                        offset: self.offset,
+                        reason: PartialFrame(self.frame_idx),
+                    }))?;
                 }
+                self.offset += 4 + self.frame_idx;
+                self.frame_idx = 0;
+                self.ff_count = 0;
             } else if self.aligned {
-                for i in 0..self.fsync_idx {
-                    self.process_byte(FSYNC[i], &mut handler)?;
+                if *d != 0xFF {
+                    for _ in 0..self.ff_count {
+                        self.process_byte(0xFF, &mut handler)?;
+                    }
+                    self.ff_count = 0;
                 }
-                self.fsync_idx = 0;
                 self.process_byte(*d, &mut handler)?;
             } else {
                 self.offset += 1;
@@ -223,9 +224,9 @@ impl FrameDecoder {
     {
         // Only take action if the AUX byte is 0xFF.  In all other cases we're dealing with a
         // partial frame or a truncated FSYNC
-        if self.fsync_idx == 1 && self.frame_idx == 15 {
-            self.process_byte(FSYNC[0], &mut handler)?;
-            self.fsync_idx = 0;
+        if self.ff_count == 1 && self.frame_idx == 15 {
+            self.process_byte(0xFF, &mut handler)?;
+            self.ff_count = 0;
         }
         Ok(())
     }
