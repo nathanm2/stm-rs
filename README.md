@@ -1,1 +1,2 @@
-A partially completed ARM STM trace parser in Rust.
+A partially completed MIPI System Trace Protocol (MIPI STP) parser implemented
+in Rust.

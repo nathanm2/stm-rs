@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, prelude::*, ErrorKind};
 use std::result;
-use stp_core::frame_decoder::{self, FrameDecoder};
+use twp::parsers::{self, FrameDecoder};
 
 const PROG_NAME: &str = crate_name!();
 
@@ -62,11 +62,11 @@ fn get_input(sub_m: &ArgMatches) -> result::Result<Box<dyn Read>, CliError> {
     }
 }
 
-impl std::convert::From<frame_decoder::Error> for CliError {
-    fn from(err: frame_decoder::Error) -> CliError {
+impl std::convert::From<parsers::Error> for CliError {
+    fn from(err: parsers::Error) -> CliError {
         match err {
             // 'Stop' does not need to report anything.
-            e if e.reason == frame_decoder::ErrorReason::Stop => CliError(None),
+            e if e.reason == parsers::ErrorReason::Stop => CliError(None),
             e => CliError(Some(format!("{}", e))),
         }
     }
@@ -154,16 +154,13 @@ impl NibbleDisplay {
         self.cur_offset += 1;
     }
 
-    fn display_error(&mut self, err: frame_decoder::Error) {
+    fn display_error(&mut self, err: parsers::Error) {
         let msg = format!("** {}", err);
         print!("\n\n{}\n", msg.red().bold());
         self.column = 0;
     }
 
-    fn display(
-        &mut self,
-        r: frame_decoder::Result<frame_decoder::Data>,
-    ) -> frame_decoder::Result<()> {
+    fn display(&mut self, r: parsers::Result<parsers::Data>) -> parsers::Result<()> {
         match r {
             Ok(d) => {
                 self.display_data(d.id, d.data, d.offset);
@@ -173,9 +170,9 @@ impl NibbleDisplay {
                 let offset = e.offset;
                 self.display_error(e);
                 if self.bail {
-                    Err(frame_decoder::Error {
+                    Err(parsers::Error {
                         offset,
-                        reason: frame_decoder::ErrorReason::Stop,
+                        reason: parsers::ErrorReason::Stop,
                     })
                 } else {
                     Ok(())

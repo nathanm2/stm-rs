@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::result;
-use stp_core::frame_builder::*;
-use stp_core::frame_decoder::{decode_frames, Data, Error, ErrorReason::*, FrameDecoder, FSYNC};
+use twp::builders::*;
+use twp::parsers::{decode_frames, Data, Error, ErrorReason::*, FrameDecoder, FSYNC};
 
 struct Recorder {
     data: HashMap<Option<u8>, Vec<u8>>,

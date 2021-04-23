@@ -1,5 +1,5 @@
-use stp_core::frame_builder::FrameBuilderError::*;
-use stp_core::frame_builder::*;
+use twp::builders::FrameBuilderError::*;
+use twp::builders::*;
 
 #[test]
 fn bad_offset() {

@@ -10,6 +10,6 @@ name = "stp"
 path = "src/main.rs"
 
 [dependencies]
-stp-core = { path = "../stp-core" }
+twp = { path = "../twp" }
 clap = "~2.33.1"
 colored = "~1.9.3"

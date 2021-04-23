@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+	"twp",
 	"stp-core",
 	"stp-cli",
 ]
