@@ -4,14 +4,33 @@ use std::fmt;
 use std::result;
 
 #[derive(Debug, PartialEq)]
-pub enum ErrorReason {
+pub struct Error {
+    /// The type of error.
+    pub kind: ErrorKind,
+    /// The stream offset where the error was encountered.
+    pub offset: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ErrorKind {
+    /// An invalid Stream ID was encountered.
     InvalidStreamId(u8),
+    /// The frame's AUX byte is invalid.
     InvalidAuxByte(u8),
+    /// The frame is less than sixteen bytes.
     PartialFrame(usize),
     Stop,
 }
 
+pub type Result<S> = result::Result<S, Error>;
+
 use self::ErrorReason::*;
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}, offset: {:#x}", self.reason, self.offset)
+    }
+}
 
 impl fmt::Display for ErrorReason {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -22,24 +41,4 @@ impl fmt::Display for ErrorReason {
             Stop => write!(f, "stopped"),
         }
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Error {
-    pub offset: usize,
-    pub reason: ErrorReason,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}, offset: {:#x}", self.reason, self.offset)
-    }
-}
-
-pub type Result<S> = result::Result<S, Error>;
-
-pub struct Data {
-    pub id: Option<u8>,
-    pub data: u8,
-    pub offset: usize,
 }
