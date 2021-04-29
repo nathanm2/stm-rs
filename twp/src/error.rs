@@ -24,15 +24,15 @@ pub enum ErrorKind {
 
 pub type Result<S> = result::Result<S, Error>;
 
-use self::ErrorReason::*;
+use self::ErrorKind::*;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}, offset: {:#x}", self.reason, self.offset)
+        write!(f, "{}, offset: {:#x}", self.kind, self.offset)
     }
 }
 
-impl fmt::Display for ErrorReason {
+impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             InvalidStreamId(id) => write!(f, "invalid stream id: {:#x}", id),

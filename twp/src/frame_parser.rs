@@ -4,7 +4,7 @@ use super::error::{ErrorKind, ErrorKind::*, Result};
 use std::convert::TryInto;
 use std::result;
 
-/// A single byte of frame data.
+/// A byte of frame data associated with a particular Stream ID.
 pub struct FrameByte {
     /// The byte value.
     pub data: u8,
@@ -16,9 +16,9 @@ pub struct FrameByte {
 ///
 /// Parses `frame` and invokes `handler` for each byte of data or error encountered.
 ///
-/// `stream_id` specifies the initial Stream ID. The final stream ID encountered while parsing the
-/// frame is returned to the caller, which could be `stream_id` if the stream ID was not modified
-/// within the frame.
+/// `stream_id` is the initial stream ID to use when parsing the frame.  If the frame was completely
+/// parsed, the last stream ID encountered will be returned to caller.  Typically, this value will
+/// be supplied as the `stream_id` parameter when parsing the next frame.
 ///
 /// `handler` takes a `twp::error::Result<FrameData>` as input parameter.  This will contain either
 /// a single byte of data associated with a particular Stream ID *or* a `twp::error::Error` if a
@@ -35,10 +35,7 @@ where
 
     // If byte 14 contains a frame id, it's aux bit should be zero per the spec:
     if aux_byte & 0x80 == 0x80 && frame[14] & 0x01 == 0x01 {
-        handler(Err(Error {
-            kind: InvalidAuxByte(aux_byte),
-            offset: 15,
-        }))?;
+        handler(Err(InvalidAuxByte(aux_byte)), 15)?;
         aux_byte = aux_byte & 0x7F;
     }
 
@@ -52,10 +49,7 @@ where
             let aux_bit = (aux_byte >> (i / 2)) & 0x01;
             if byte & 0x01 == 1 {
                 if *byte == 0xFF {
-                    handler(Err(Error {
-                        kind: InvalidStreamId(0x7F),
-                        offset: i,
-                    }))?;
+                    handler(Err(InvalidStreamId(0x7F)), i)?;
                 }
                 // Id Change.
                 if aux_bit == 1 {
@@ -67,19 +61,23 @@ where
                     cur_stream = byte >> 1;
                 }
             } else {
-                handler(Ok(FrameByte {
-                    id: cur_stream,
-                    data: byte | aux_bit,
-                    offset: i,
-                }))?;
+                handler(
+                    Ok(FrameByte {
+                        id: cur_stream,
+                        data: byte | aux_bit,
+                    }),
+                    i,
+                )?;
             }
         } else {
             // Odd byte: Data only.
-            handler(Ok(FrameByte {
-                id: cur_stream,
-                data: *byte,
-                offset: i,
-            }))?;
+            handler(
+                Ok(FrameByte {
+                    id: cur_stream,
+                    data: *byte,
+                }),
+                i,
+            )?;
             if delayed == true {
                 cur_stream = next_stream;
                 delayed = false;
@@ -96,38 +94,23 @@ where
 ///
 ///  * `frames` - A stream of bytes representing contiguous 16 byte frames.
 ///  * `stream_id` - The starting stream ID.
-pub fn decode_frames<H>(frames: &[u8], stream_id: u8, mut handler: H) -> Result<u8>
+pub fn parse_frames<H>(frames: &[u8], stream_id: u8, mut handler: H) -> Result<u8>
 where
-    H: FnMut(Result<Data>) -> Result<()>,
+    H: FnMut(result::Result<FrameByte, ErrorKind>, usize) -> Result<()>,
 {
     let mut id = stream_id;
     let mut offset = 0;
     let mut iter = frames.chunks_exact(16);
 
     for frame in &mut iter {
-        id = decode_frame_offset(frame.try_into().unwrap(), id, |r, o| handler(r, o + offset))?;
+        id = parse_frame(frame.try_into().unwrap(), id, |r, o| handler(r, o + offset))?;
         offset += 16;
     }
 
     let remainder = iter.remainder().len();
     if remainder > 0 {
-        handler(Err(Error {
-            offset: offset,
-            reason: PartialFrame(remainder),
-        }))?;
+        handler(Err(PartialFrame(remainder)), offset)?;
     }
 
     Ok(id)
-}
-
-pub fn decode_frame_offset<H>(
-    frame: &[u8; 16],
-    stream_id: Option<u8>,
-    mut handler: H,
-    offset: usize,
-) -> Result<Option<u8>>
-where
-    H: FnMut(Result<Data>) -> Result<()>,
-{
-    decode_frame(frame, stream_id, |r, o| handler(r, o + offset))
 }
