@@ -2,32 +2,68 @@
 
 use super::error::{ErrorKind, ErrorKind::*, Result};
 use std::convert::TryInto;
+use std::option::Option;
 use std::result;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum StreamId {
+    Null,
+    Data(u8),
+    Trigger,
+}
+
+use self::StreamId::*;
+
+impl From<u8> for StreamId {
+    fn from(id: u8) -> Self {
+        match id {
+            0 => Null,
+            0x7D => Trigger,
+            _ => Data(id),
+        }
+    }
+}
+
+impl Into<u8> for StreamId {
+    fn into(self) -> u8 {
+        match self {
+            Null => 0,
+            Trigger => 0x7D,
+            Data(id) => id,
+        }
+    }
+}
 
 /// A byte of frame data associated with a particular Stream ID.
 pub struct FrameByte {
     /// The byte value.
     pub data: u8,
     /// The byte's associated Stream ID.
-    pub id: u8,
+    pub id: Option<StreamId>,
 }
 
 /// Parse a single TWP frame.
 ///
 /// Parses `frame` and invokes `handler` for each byte of data or error encountered.
 ///
-/// `stream_id` is the initial stream ID to use when parsing the frame.  If the frame was completely
-/// parsed, the last stream ID encountered will be returned to caller.  Typically, this value will
-/// be supplied as the `stream_id` parameter when parsing the next frame.
+/// `stream_id` is the initial stream ID to use when parsing the frame.  The last stream ID
+/// encountered will be returned to the caller unless `handler` returns an error, in which case this
+/// error will be returned instead.  Typically, the returned stream ID will be used as the
+/// `stream_id` parameter when parsing the next frame.
 ///
-/// `handler` takes a `twp::error::Result<FrameData>` as input parameter.  This will contain either
-/// a single byte of data associated with a particular Stream ID *or* a `twp::error::Error` if a
-/// problem was encountered during parsing.  If `handler` returns an error, frame parsing will
-/// stop immediately regardless of whether an error was encountered.
+/// `handler` is given both a `twp::error::Result<FrameData>` and `usize` offset as input
+/// parameters.  Result will contain either a single byte of data associated with a particular
+/// Stream ID *or* a `twp::error::ErrorKind` if a problem was encountered during parsing.  If
+/// `handler` returns an `twp::error::Error`, frame parsing will stop immediately regardless of
+/// whether an error was encountered.
 ///
-/// All offsets passed `handler` are relative to the frame.
+/// All offsets passed to `handler` are relative to the frame.
 ///
-pub fn parse_frame<H>(frame: &[u8; 16], stream_id: u8, mut handler: H) -> Result<u8>
+pub fn parse_frame<H>(
+    frame: &[u8; 16],
+    stream_id: Option<StreamId>,
+    mut handler: H,
+) -> Result<Option<StreamId>>
 where
     H: FnMut(result::Result<FrameByte, ErrorKind>, usize) -> Result<()>,
 {
@@ -40,7 +76,7 @@ where
     }
 
     let mut cur_stream = stream_id;
-    let mut next_stream = 0;
+    let mut next_stream = None;
     let mut delayed = false;
 
     for (i, byte) in frame[..15].iter().enumerate() {
@@ -54,11 +90,11 @@ where
                 // Id Change.
                 if aux_bit == 1 {
                     // Delayed ID Change.
-                    next_stream = byte >> 1;
+                    next_stream = Some(StreamId::from(byte >> 1));
                     delayed = true;
                 } else {
                     // Immediate ID change.
-                    cur_stream = byte >> 1;
+                    cur_stream = Some(StreamId::from(byte >> 1));
                 }
             } else {
                 handler(
@@ -88,13 +124,30 @@ where
     Ok(cur_stream)
 }
 
-/// Decode a series of frames.
+/// Parse a series of TWP frames.
 ///
-/// # Arguments
+/// Use `LayerParser` if the byte trace stream contains Frame Sync or Halfword Sync packets.
 ///
-///  * `frames` - A stream of bytes representing contiguous 16 byte frames.
-///  * `stream_id` - The starting stream ID.
-pub fn parse_frames<H>(frames: &[u8], stream_id: u8, mut handler: H) -> Result<u8>
+/// Parses a series of TWP frames and invokes `handler` for each byte of data or error encountered.
+///
+/// `stream_id` is the initial stream ID to use when parsing the frame.  The last stream ID
+/// encountered will be returned to the caller unless `handler` returns an error, in which case this
+/// error will be returned instead.  Typically, the returned stream ID will be used as the
+/// `stream_id` parameter when parsing the next frame.
+///
+/// `handler` is given both a `twp::error::Result<FrameData>` and `usize` offset as input
+/// parameters.  Result will contain either a single byte of data associated with a particular
+/// Stream ID *or* a `twp::error::ErrorKind` if a problem was encountered during parsing.  If
+/// `handler` returns an `twp::error::Error`, frame parsing will stop immediately regardless of
+/// whether an error was encountered.
+///
+/// All offsets passed to `handler` are relative to the start of the byte stream.
+///
+pub fn parse_frames<H>(
+    frames: &[u8],
+    stream_id: Option<StreamId>,
+    mut handler: H,
+) -> Result<Option<StreamId>>
 where
     H: FnMut(result::Result<FrameByte, ErrorKind>, usize) -> Result<()>,
 {
