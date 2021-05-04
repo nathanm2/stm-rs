@@ -1,14 +1,14 @@
 use std::result;
 
 #[derive(Debug, PartialEq)]
-pub enum FrameBuilderError {
+pub enum Error {
     InvalidOffset(usize),
     InvalidStreamId(usize, u8),
     InvalidDelayedId(usize, u8),
     MissingData(usize),
 }
 
-use FrameBuilderError::*;
+use Error::*;
 
 pub type Result = result::Result<(), FrameBuilderError>;
 
