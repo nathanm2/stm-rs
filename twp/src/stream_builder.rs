@@ -19,16 +19,21 @@ impl std::convert::From<io::Error> for Error {
 
 use Error::*;
 
+enum EvenByte {
+    Data(u8),
+    Id(u8, bool),
+}
+
+use EvenByte::*;
+
 pub struct StreamBuilder<'a, W>
 where
     W: Write,
 {
     out: &'a mut W,
-    id: u8,
     aux: u8,
-    last: Option<u8>,
-    offset: usize,
-    total: usize,
+    even_byte: Option<EvenByte>,
+    frame_offset: usize,
 }
 
 impl<'a, W> StreamBuilder<'a, W>
@@ -38,15 +43,13 @@ where
     pub fn new(out: &'a mut W) -> Self {
         StreamBuilder {
             out: out,
-            id: 0,
             aux: 0,
-            last: None,
-            offset: 0,
-            total: 0,
+            even_byte: None,
+            frame_offset: 0,
         }
     }
 
-    pub fn finish(&mut self) -> Result<usize, Error> {
+    pub fn done(&mut self) -> Result<usize, Error> {
         Ok(42)
     }
 
@@ -72,7 +75,21 @@ where
         Ok(self)
     }
 
-    fn write_data_byte(&mut self, byte: u8) -> Result<usize, Error> {
-        Ok(0)
+    fn set_even_byte(&mut self, even_byte: EvenByte) -> u8 {
+        let mask = 0x01 << self.frame_offset / 2;
+        match even_byte {
+            Data(d) => {
+                if d & 0x01 == 0 {
+                    self.aux &= !mask;
+                } else {
+                    self.aux |= mask;
+                }
+                d & 0xFE
+            }
+            Id(id, deferred) => {
+
+            ImmediateId(id) => {}
+            DeferredId(id) => {}
+        }
     }
 }
