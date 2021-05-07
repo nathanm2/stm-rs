@@ -105,9 +105,8 @@ where
             match byte {
                 Id(id, _) => {
                     let tmp = self.set_even_byte(Id(id, true));
-                    self.out.write(&[tmp])?;
                     match self.even_byte {
-                        Data(d) => self.out.write(&[d])?,
+                        Data(d) => self.out.write(&[tmp, d])?,
                         Id(_, _) => panic!(),
                     };
                 }
