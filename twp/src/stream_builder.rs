@@ -19,12 +19,12 @@ impl std::convert::From<io::Error> for Error {
 
 use Error::*;
 
-enum EvenByte {
+enum ByteType {
     Data(u8),
     Id(u8, bool),
 }
 
-use EvenByte::*;
+use ByteType::*;
 
 pub struct StreamBuilder<'a, W>
 where
@@ -32,8 +32,10 @@ where
 {
     out: &'a mut W,
     aux: u8,
-    even_byte: Option<EvenByte>,
+    next_id: Option<u8>,
+    even_byte: ByteType,
     frame_offset: usize,
+    total: usize,
 }
 
 impl<'a, W> StreamBuilder<'a, W>
@@ -44,22 +46,36 @@ where
         StreamBuilder {
             out: out,
             aux: 0,
-            even_byte: None,
+            next_id: None,
+            even_byte: Data(0),
             frame_offset: 0,
+            total: 0,
         }
     }
 
-    pub fn done(&mut self) -> Result<usize, Error> {
+    pub fn finish(&mut self) -> Result<usize, Error> {
         Ok(42)
     }
 
     pub fn id(&mut self, id: StreamId) -> Result<&mut Self, Error> {
-        let id = [id.into()];
-        self.out.write(&id)?;
+        self.next_id = Some(id.into());
         Ok(self)
     }
 
     pub fn data(&mut self, data: &[u8]) -> Result<&mut Self, Error> {
+        if data.len() == 0 {
+            return Ok(self);
+        }
+
+        if let Some(id) = self.next_id {
+            self.push_byte(Id(id, false))?;
+            self.next_id = None;
+        }
+
+        for d in data {
+            self.push_byte(Data(*d))?;
+        }
+
         Ok(self)
     }
 
@@ -75,9 +91,43 @@ where
         Ok(self)
     }
 
-    fn set_even_byte(&mut self, even_byte: EvenByte) -> u8 {
+    fn push_byte(&mut self, byte: ByteType) -> Result<(), Error> {
+        if self.frame_offset % 2 == 0 {
+            if self.frame_offset < 14 {
+                self.even_byte = byte;
+            } else {
+                let halfword = [self.set_even_byte(byte), self.aux];
+                self.total += self.out.write(&halfword)?;
+                self.frame_offset = 0;
+                self.aux = 0;
+            }
+        } else {
+            match byte {
+                Id(id, _) => {
+                    let tmp = self.set_even_byte(Id(id, true));
+                    self.out.write(&[tmp])?;
+                    match self.even_byte {
+                        Data(d) => self.out.write(&[d])?,
+                        Id(_, _) => panic!(),
+                    };
+                }
+                Data(d) => {
+                    let even_byte = self.even_byte;
+                    let tmp = self.set_even_byte(even_byte);
+                    self.out.write(&[tmp])?;
+                    self.out.write(&[d])?;
+                }
+            }
+
+            self.total += 2;
+            self.frame_offset += 2;
+        }
+        Ok(())
+    }
+
+    fn set_even_byte(&mut self, byte: ByteType) -> u8 {
         let mask = 0x01 << self.frame_offset / 2;
-        match even_byte {
+        match byte {
             Data(d) => {
                 if d & 0x01 == 0 {
                     self.aux &= !mask;
@@ -86,10 +136,7 @@ where
                 }
                 d & 0xFE
             }
-            Id(id, deferred) => {
-
-            ImmediateId(id) => {}
-            DeferredId(id) => {}
+            Id(id, deferred) => id,
         }
     }
 }
