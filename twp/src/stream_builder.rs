@@ -30,6 +30,7 @@ where
 {
     out: &'a mut W,
     aux: u8,
+    current_id: u8,
     next_id: Option<u8>,
     even_byte: ByteType,
     frame_offset: usize,
@@ -44,6 +45,7 @@ where
         StreamBuilder {
             out: out,
             aux: 0,
+            current_id: 0,
             next_id: None,
             even_byte: Data(0),
             frame_offset: 0,
@@ -57,11 +59,24 @@ where
     }
 
     pub fn pad_frame(&mut self) -> Result<&mut Self, Error> {
+        // Easy case:
+        if self.frame_offset == 0 {
+            return Ok(self);
+        }
+
+        // Use this id after padding:
+        let next_id = self.next_id.unwrap_or_else(|| self.current_id);
+
         if self.frame_offset == 14 {
             self.push_byte(Id(0))?;
-        } else if self.frame_offset > 0 {
+        } else {
             self.id_data(StreamId::Null, &vec![0; 16 - self.frame_offset - 1])?;
         }
+
+        if next_id != 0 {
+            self.id(StreamId::from(next_id))?;
+        }
+
         Ok(self)
     }
 
@@ -83,6 +98,7 @@ where
 
         if let Some(id) = self.next_id {
             self.push_byte(Id(id))?;
+            self.current_id = id;
             self.next_id = None;
         }
 
@@ -106,13 +122,14 @@ where
     }
 
     fn push_byte(&mut self, byte: ByteType) -> Result<(), Error> {
-        // Even bytes are buffered unless it's last even byte of the frame.  Buffering is needed to
-        // support 'deferred' ID changes in the stream.
+        // Even data bytes are buffered in case a deferred stream id needs to be swapped into the
+        // even byte position, and the data byte is pushed into the following odd byte position.
         if self.frame_offset % 2 == 0 {
             if self.frame_offset < 14 {
                 self.even_byte = byte;
                 self.frame_offset += 1;
             } else {
+                // The last even byte of a frame is not buffered.  It's written with the AUX byte.
                 let even = self.even_byte(byte, true);
                 self.total += self.out.write(&[even, self.aux])?;
                 self.frame_offset = 0;
