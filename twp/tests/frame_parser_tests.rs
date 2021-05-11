@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use twp::error::*;
-use twp::frame_parser::*;
+use std::result;
+use twp::stream_builder::{self, StreamBuilder};
+use twp::*;
 
 type DataMap = HashMap<Option<StreamId>, Vec<u8>>;
 
-// Utility function that populates a map from FrameBytes and optionally records the errors
-// encountered.
+// Parses a series of TWP frames and populates `data_map` and `errors`.
 fn record_parse_frames(
     frames: &[u8],
     data_map: &mut DataMap,
@@ -120,4 +120,49 @@ fn unknown_id() {
     expected.insert(None, vec![0; 30]);
 
     assert_eq!(data_map, expected);
+}
+
+// Test immediate and deferred stream change:
+#[test]
+fn id_change() -> result::Result<(), stream_builder::Error> {
+    let mut frames = Vec::with_capacity(16);
+    let _ = StreamBuilder::new(&mut frames)
+        .id_data(StreamId::Data(1), &[1; 2])?
+        .id_data(StreamId::Data(2), &[2, 2])?
+        .finish();
+    let mut data_map = DataMap::new();
+    let result = record_parse_frames(&frames, &mut data_map, None);
+    assert_eq!(result, Ok(Some(StreamId::Null)));
+
+    let mut expected = HashMap::new();
+    expected.insert(Some(StreamId::Data(1)), vec![1; 2]);
+    expected.insert(Some(StreamId::Data(2)), vec![2; 2]);
+    expected.insert(Some(StreamId::Null), vec![0; 8]);
+
+    assert_eq!(data_map, expected);
+    Ok(())
+}
+
+// Put a stream change at the end of a frame:
+#[test]
+fn id_change_end_of_frame() -> result::Result<(), stream_builder::Error> {
+    let mut frames = Vec::with_capacity(16);
+    let r = StreamBuilder::new(&mut frames)
+        .id_data(StreamId::Data(1), &[1; 13])?
+        .id_data(StreamId::Data(2), &[2; 15])?
+        .finish();
+
+    print!("{:?}\n", frames);
+
+    assert_eq!(r, Ok(32));
+    let mut data_map = DataMap::new();
+    let result = record_parse_frames(&frames, &mut data_map, None);
+    assert_eq!(result, Ok(Some(StreamId::Data(2))));
+
+    let mut expected = HashMap::new();
+    expected.insert(Some(StreamId::Data(1)), vec![1; 13]);
+    expected.insert(Some(StreamId::Data(2)), vec![2; 15]);
+
+    assert_eq!(data_map, expected);
+    Ok(())
 }
