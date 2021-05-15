@@ -166,3 +166,46 @@ fn id_change_end_of_frame() -> result::Result<(), stream_builder::Error> {
     assert_eq!(data_map, expected);
     Ok(())
 }
+
+// Invalid aux byte:
+#[test]
+fn invalid_aux_byte() {
+    let mut frames = [0; 32];
+
+    frames[14] = 0x03;
+    frames[15] = 0x80;
+
+    let mut data_map = DataMap::new();
+    let result = record_parse_frames(&frames, &mut data_map, None);
+
+    assert_eq!(
+        result,
+        Err(Error {
+            offset: 15,
+            kind: ErrorKind::InvalidAuxByte(0x80)
+        })
+    );
+
+    let expected = HashMap::new();
+    assert_eq!(data_map, expected);
+}
+
+// Invalid aux byte continue:
+#[test]
+fn invalid_aux_byte_cont() {
+    let mut frames = [0; 32];
+    let mut errors = Vec::new();
+
+    frames[14] = 0x03;
+    frames[15] = 0x80;
+
+    let mut data_map = DataMap::new();
+    let result = record_parse_frames(&frames, &mut data_map, Some(&mut errors));
+    assert_eq!(result, Ok(Some(StreamId::Data(1))));
+
+    let mut expected = HashMap::new();
+    expected.insert(None, vec![0; 14]);
+    expected.insert(Some(StreamId::Data(1)), vec![0; 15]);
+
+    assert_eq!(data_map, expected);
+}
