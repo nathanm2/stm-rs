@@ -66,9 +66,6 @@ pub struct FrameByte {
 /// Note that in the event of an error, `handler` is supplied an twp::error::ErrorKind but must
 /// return a twp::error::Error which is a combination of ErrorKind and the offset.
 ///
-/// Example
-/// ```rust
-/// ```
 pub fn parse_frame<H>(
     frame: &[u8; 16],
     stream_id: Option<StreamId>,

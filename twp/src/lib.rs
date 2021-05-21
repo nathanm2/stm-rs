@@ -1,18 +1,20 @@
-//! A library for building or parsing a MIPI Trace Wrapper Protocol (TWP) stream (aka ARM Trace
-//! Formatter Protocol).
+//! A library for parsing or building a MIPI Trace Wrapper Protocol (TWP) stream.
 //!
-//! TWP allows multiple trace streams to combined into a single stream.  It is compatible with with
-//! ARM's **Trace Formatter Protocol** emitted by [ARM CoreSight] trace sinks.  A TWP stream is
-//! sometimes called **TPIU frames**.
+//! TWP allows multiple trace streams to combined into a single stream.  It is often used in
+//! embedded, ARM-based SoC systems.
 //!
-//! The MIPI TWP specification can be found [here].
+//! TWP is compatible with ARM's [CoreSight Trace Formatter][ARM01] specification (aka TPIU).
 //!
-//! [here]: https://www.mipi.org/specifications/twp
-//! [ARM CoreSight]: https://developer.arm.com/documentation/ihi0029/e
+//! The MIPI TWP specification can be found [here][MIPI01].
+//!
+//! [MIPI01]: https://www.mipi.org/specifications/twp
+//! [ARM01]: https://developer.arm.com/documentation/ihi0029/e
 //!
 pub use error::*;
 pub use frame_parser::*;
+pub use layer_parser::*;
 
 pub mod error;
 pub mod frame_parser;
+pub mod layer_parser;
 pub mod stream_builder;

@@ -1,87 +1,143 @@
-use super::frame_parser::decode_frame_offset;
-use super::types::{Data, Error, ErrorReason::*, Result};
+use super::error::{Error, ErrorKind, Result};
 
-pub struct FrameDecoder {
-    frame: [u8; 16],
-    frame_idx: usize,
-    ff_count: usize,
-    aligned: bool,
-    stream_id: Option<u8>,
-    offset: usize,
+pub enum Layer<'a> {
+    /// Layer T1: Padding packet.  Emitted when the trace port is idle.  Can be found within a frame
+    /// or between frames and is always aligned on a 16-bit boundary.
+    Padding { offset: usize },
+
+    /// Layer T2: Frame synchronization packet.  Emitted periodically between frames.  Used to
+    /// determine frame alignment within a stream of bytes.
+    FrameSync { offset: usize },
+
+    /// Layer T3: Data frame.  Sixteen byte data frame.  Since padding packets can appear within a
+    /// frame, a frame's bytes are not always contiguous.
+    Frame {
+        frame: &'a [u8; 16],
+        offsets: &'a [usize; 16],
+    },
 }
 
-pub const FSYNC: [u8; 4] = [0xFF, 0xFF, 0xFF, 0x7F];
+pub struct LayerParser {
+    frame: [u8; 16],
+    frame_offsets: [usize; 16],
+    frame_idx: usize,
+    ff_count: usize,
+    syncd: bool, // synchronized
+    offset: usize,
+    padding: bool,
+}
 
-impl FrameDecoder {
-    pub fn new(aligned: bool, stream_id: Option<u8>) -> FrameDecoder {
-        FrameDecoder {
+impl LayerParser {
+    pub fn new(syncd: bool, padding: bool, offset: usize) -> LayerParser {
+        LayerParser {
             frame: [0; 16],
+            frame_offsets: [0; 16],
             frame_idx: 0,
             ff_count: 0,
-            aligned,
-            stream_id,
-            offset: 0,
+            syncd,
+            offset,
+            padding,
         }
     }
 
-    pub fn decode<H>(&mut self, data: &[u8], mut handler: H) -> Result<()>
+    pub fn parse<H>(&mut self, data: &[u8], mut handler: H) -> Result<()>
     where
-        H: FnMut(Result<Data>) -> Result<()>,
+        H: FnMut(Result<Layer>) -> Result<()>,
     {
         for d in data {
-            if *d == 0xFF && self.ff_count < 3 {
-                self.ff_count += 1;
-            } else if *d == 0x7F && self.ff_count == 3 {
-                self.aligned = true;
-                if self.frame_idx > 0 {
-                    handler(Err(Error {
-                        offset: self.offset,
-                        reason: PartialFrame(self.frame_idx),
-                    }))?;
-                }
-                self.offset += 4 + self.frame_idx;
-                self.frame_idx = 0;
-                self.ff_count = 0;
-            } else if self.aligned {
-                if *d != 0xFF {
-                    for _ in 0..self.ff_count {
-                        self.process_byte(0xFF, &mut handler)?;
-                    }
-                    self.ff_count = 0;
-                }
-                self.process_byte(*d, &mut handler)?;
-            } else {
-                self.offset += 1;
-            }
+            let result = self.process_byte(*d, &mut handler);
+            self.offset += 1;
+            result?;
         }
+
         Ok(())
     }
 
     pub fn finish<H>(&mut self, mut handler: H) -> Result<()>
     where
-        H: FnMut(Result<Data>) -> Result<()>,
+        H: FnMut(Result<Layer>) -> Result<()>,
     {
-        // Only take action if the AUX byte is 0xFF.  In all other cases we're dealing with a
-        // partial frame or a truncated FSYNC
-        if self.ff_count == 1 && self.frame_idx == 15 {
-            self.process_byte(0xFF, &mut handler)?;
-            self.ff_count = 0;
+        let ff_count = self.ff_count;
+        self.ff_count = 0;
+
+        for i in 0..ff_count {
+            self.frame_byte(0xFF, self.offset - (ff_count - i), &mut handler)?;
         }
         Ok(())
     }
 
     fn process_byte<H>(&mut self, byte: u8, mut handler: H) -> Result<()>
     where
-        H: FnMut(Result<Data>) -> Result<()>,
+        H: FnMut(Result<Layer>) -> Result<()>,
+    {
+        if byte == 0xFF {
+            if self.ff_count < 3 {
+                self.ff_count += 1;
+            } else {
+                if self.ff_count == 2 {
+                    self.frame_byte(byte, self.offset - 2, &mut handler)?;
+                }
+                self.frame_byte(byte, self.offset - 3, &mut handler)?;
+            }
+        } else if byte == 0x7F && self.ff_count == 3 {
+            self.syncd = true;
+            self.ff_count = 0;
+
+            // We got a frame sync in the middle of a frame.  This could indicate that we lost
+            // synchronization since the prior FrameSync and some number of the preceding frames are
+            // invalid.
+            if self.frame_idx > 0 {
+                self.frame_idx = 0;
+                handler(Err(Error {
+                    kind: ErrorKind::InvalidFrames,
+                    offset: self.offset,
+                }))?
+            }
+            handler(Ok(Layer::FrameSync {
+                offset: self.offset - 3,
+            }))?;
+
+            // Padding packets are aligned on a 16-bit boundary with respect to a frame.
+        } else if self.padding
+            && byte == 0x7F
+            && self.syncd
+            && self.ff_count > 0
+            && ((self.frame_idx + self.ff_count + 1) % 2) == 0
+        {
+            let extra_ff = self.ff_count == 2;
+            self.ff_count = 0;
+            if extra_ff {
+                self.frame_byte(byte, self.offset - 2, &mut handler)?;
+            }
+            handler(Ok(Layer::Padding {
+                offset: self.offset - 1,
+            }))?;
+        } else if self.syncd {
+            let ff_count = self.ff_count;
+            self.ff_count = 0;
+
+            for i in 0..ff_count {
+                self.frame_byte(0xFF, self.offset - (ff_count - i), &mut handler)?;
+            }
+            self.frame_byte(byte, self.offset, &mut handler)?;
+        }
+
+        Ok(())
+    }
+
+    fn frame_byte<H>(&mut self, byte: u8, offset: usize, mut handler: H) -> Result<()>
+    where
+        H: FnMut(Result<Layer>) -> Result<()>,
     {
         self.frame[self.frame_idx] = byte;
+        self.frame_offsets[self.frame_idx] = offset;
         self.frame_idx += 1;
         if self.frame_idx == self.frame.len() {
-            let offset = self.offset;
-            self.offset += self.frame.len();
             self.frame_idx = 0;
-            self.stream_id =
-                decode_frame_offset(&self.frame, self.stream_id, &mut handler, offset)?;
+            handler(Ok(Layer::Frame {
+                frame: &self.frame,
+                offsets: &self.frame_offsets,
+            }))?;
         }
         Ok(())
     }

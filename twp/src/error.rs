@@ -19,6 +19,8 @@ pub enum ErrorKind {
     InvalidAuxByte(u8),
     /// The frame is less than sixteen bytes.
     PartialFrame(usize),
+    /// Some number of the preceding frames are invalid.
+    InvalidFrames,
     Stop,
 }
 
@@ -38,6 +40,7 @@ impl fmt::Display for ErrorKind {
             InvalidStreamId(id) => write!(f, "invalid stream id: {:#x}", id),
             InvalidAuxByte(byte) => write!(f, "invalid aux byte: {:#x}", byte),
             PartialFrame(size) => write!(f, "truncated frame: {} bytes", size),
+            InvalidFrames => write!(f, "invalid frames"),
             Stop => write!(f, "stopped"),
         }
     }
