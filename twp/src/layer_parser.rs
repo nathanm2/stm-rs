@@ -40,6 +40,10 @@ impl LayerParser {
         }
     }
 
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
     pub fn parse<H>(&mut self, data: &[u8], mut handler: H) -> Result<()>
     where
         H: FnMut(Result<Layer>) -> Result<()>,
