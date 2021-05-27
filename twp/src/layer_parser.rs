@@ -10,7 +10,8 @@ pub enum Layer<'a> {
     FrameSync { offset: usize },
 
     /// Layer T3: Data frame.  Sixteen byte data frame.  Since padding packets can appear within a
-    /// frame, a frame's bytes are not always contiguous.
+    /// frame, the bytes comprising a frame are not always contiguous, and thus the offsets are
+    /// presented in a seperate array.
     Frame {
         frame: &'a [u8; 16],
         offsets: &'a [usize; 16],
