@@ -61,13 +61,27 @@ impl LayerParser {
     where
         H: FnMut(Result<Layer>) -> Result<()>,
     {
-        let ff_count = self.ff_count;
+        let mut ff_count = self.ff_count;
         self.ff_count = 0;
 
-        for i in 0..ff_count {
-            self.frame_byte(0xFF, self.offset - (ff_count - i), &mut handler)?;
+        // If we're one byte short of finishing a frame and we've got at least one "0xFF" byte
+        // cached, we'll assume that at least one of these "0xFF" bytes belongs to the frame.
+        if self.frame_idx == self.frame.len() - 1 && ff_count > 0 {
+            self.frame_byte(0xFF, self.offset - ff_count, &mut handler)?;
+            ff_count -= 1;
         }
-        Ok(())
+
+        if ff_count > 0 || self.frame_idx > 0 {
+            Err(Error {
+                kind: ErrorKind::PartialLayer {
+                    frame_size: self.frame_idx,
+                    ff_count: ff_count,
+                },
+                offset: self.offset,
+            })
+        } else {
+            Ok(())
+        }
     }
 
     fn process_byte<H>(&mut self, byte: u8, mut handler: H) -> Result<()>

@@ -19,8 +19,13 @@ pub enum ErrorKind {
     InvalidAuxByte(u8),
     /// The frame is less than sixteen bytes.
     PartialFrame(usize),
-    /// Some number of the preceding frames are invalid.
+    /// Sychronization was lost and some number of the preceding frames may be invalid.
     InvalidFrames,
+    /// The stream was terminated with a partial frame and/or sync packet.
+    PartialLayer {
+        frame_size: usize,
+        ff_count: usize,
+    },
     Stop,
 }
 
@@ -41,6 +46,14 @@ impl fmt::Display for ErrorKind {
             InvalidAuxByte(byte) => write!(f, "invalid aux byte: {:#x}", byte),
             PartialFrame(size) => write!(f, "truncated frame: {} bytes", size),
             InvalidFrames => write!(f, "invalid frames"),
+            PartialLayer {
+                frame_size,
+                ff_count,
+            } => write!(
+                f,
+                "partial layer: frame size: {}, sync size: {}",
+                frame_size, ff_count
+            ),
             Stop => write!(f, "stopped"),
         }
     }

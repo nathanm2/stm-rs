@@ -56,10 +56,8 @@ fn capture_layers(
     layers: &mut Vec<TestLayer>,
     mut errors: Option<&mut Vec<Error>>,
 ) -> Result<()> {
-    parser.parse(stream, |lr| {
-        capture_layer(lr, layers, errors.as_deref_mut())
-    })?;
-    parser.finish(|lr| capture_layer(lr, layers, errors.as_deref_mut()))
+    let mut c = |lr| capture_layer(lr, layers, errors.as_deref_mut());
+    parser.parse(stream, c)
 }
 
 #[test]
